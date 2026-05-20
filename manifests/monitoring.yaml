@@ -1,0 +1,71 @@
+# Prometheus scrape targets for the Istio IGW hardening playground.
+#
+# Two PodMonitor resources:
+#   1. `ingress-gw` — scrapes Envoy stats from canary AND prod gateway
+#      pods on port 15090 (named http-envoy-prom) every 5s. Surfaces
+#      track and app labels for filtering in the Grafana dashboard.
+#      Required for panels 1, 2, 3.
+#   2. `istiod` — scrapes istiod's pilot.* metrics from port 15014
+#      (named http-monitoring) every 5s. Required for panel 4
+#      (xDS pushes per second).
+#
+# Both PodMonitors carry the label `release: kube-prom-stack` so the
+# Prometheus operator's default selector picks them up. The scrape
+# interval is 5s (tighter than the chart default 30s) because demos
+# run for 30-50s and the rate() windows in the dashboard use 15s, so
+# we need fine-grained data points to plot the route shift visibly.
+#
+# istiod's metrics-port discovery is the more subtle of the two: the
+# istio-proxy on gateway pods exposes Envoy's /stats/prometheus on
+# 15090. istiod itself exposes its own Go-runtime + pilot.* metrics on
+# port 15014. The default kube-prom-stack install does NOT include a
+# PodMonitor for istiod, so panel 4 silently shows no data until this
+# manifest is applied.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: ingress-gw
+  namespace: monitoring
+  labels:
+    release: kube-prom-stack
+spec:
+  namespaceSelector:
+    matchNames:
+    - istio-system
+  selector:
+    matchLabels:
+      app: ingress-gw
+  podMetricsEndpoints:
+  - port: http-envoy-prom
+    path: /stats/prometheus
+    interval: 5s
+    relabelings:
+    # Surface the track label (prod / canary) on every metric for filtering
+    - sourceLabels: [__meta_kubernetes_pod_label_track]
+      targetLabel: track
+    # Surface the app label
+    - sourceLabels: [__meta_kubernetes_pod_label_app]
+      targetLabel: app
+---
+# istiod Prometheus metrics endpoint (port 15014 / http-monitoring).
+# Sources pilot_xds_pushes_total, pilot_xds_push_time_seconds, and the rest
+# of the pilot.* family used by Panel 4 (xDS pushes per second).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: istiod
+  namespace: monitoring
+  labels:
+    release: kube-prom-stack
+spec:
+  namespaceSelector:
+    matchNames:
+    - istio-system
+  selector:
+    matchLabels:
+      app: istiod
+  podMetricsEndpoints:
+  - port: http-monitoring
+    path: /metrics
+    interval: 5s

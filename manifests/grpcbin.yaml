@@ -1,0 +1,129 @@
+# grpcbin family for the Istio IGW hardening playground gRPC demos
+# (#08c gRPC mirror VS, #08d gRPC mirror GRPCRoute, #13c gRPC long-lived).
+#
+# Image moul/grpcbin (pinned SHA) per `docker run grpcbin` startup logs:
+#   port 9000 = insecure gRPC (plaintext h2c)  ← we use this
+#   port 9001 = secure gRPC (TLS handshake required)
+#
+# We point Services at port 9000 because our gateway listener is plaintext
+# (no TLS infrastructure in this playground; ambient mTLS handles the L4
+# protection in-cluster), and reaching grpcbin's TLS port without an
+# explicit TLS-originate config would fail at the TLS handshake.
+#
+# Three backends mirror the httpbin family: primary, shadow, v2.
+# All three live in `apps` (ambient) — ztunnel HBONE-wraps the gateway→backend
+# traffic for in-cluster mTLS, and forwards plaintext to grpcbin's 9000.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grpcbin
+  namespace: apps
+  labels: {app: grpcbin, version: primary}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: grpcbin, version: primary}
+  template:
+    metadata:
+      labels: {app: grpcbin, version: primary}
+    spec:
+      containers:
+      - name: grpcbin
+        image: moul/grpcbin@sha256:bd8f2ffdd02d0849fad2d1c754eff4402c867e7a3e0552b8992f4590f5687d20
+        ports:
+        - containerPort: 9000
+          name: grpc-plain
+        readinessProbe:
+          tcpSocket: {port: 9000}
+          periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grpcbin
+  namespace: apps
+  labels: {app: grpcbin}
+spec:
+  selector: {app: grpcbin, version: primary}
+  ports:
+  - name: grpc
+    port: 9000
+    targetPort: 9000
+    appProtocol: grpc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grpcbin-shadow
+  namespace: apps
+  labels: {app: grpcbin, version: shadow}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: grpcbin, version: shadow}
+  template:
+    metadata:
+      labels: {app: grpcbin, version: shadow}
+    spec:
+      containers:
+      - name: grpcbin
+        image: moul/grpcbin@sha256:bd8f2ffdd02d0849fad2d1c754eff4402c867e7a3e0552b8992f4590f5687d20
+        ports:
+        - containerPort: 9000
+          name: grpc-plain
+        readinessProbe:
+          tcpSocket: {port: 9000}
+          periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grpcbin-shadow
+  namespace: apps
+  labels: {app: grpcbin, version: shadow}
+spec:
+  selector: {app: grpcbin, version: shadow}
+  ports:
+  - name: grpc
+    port: 9000
+    targetPort: 9000
+    appProtocol: grpc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grpcbin-v2
+  namespace: apps
+  labels: {app: grpcbin, version: v2}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: grpcbin, version: v2}
+  template:
+    metadata:
+      labels: {app: grpcbin, version: v2}
+    spec:
+      containers:
+      - name: grpcbin
+        image: moul/grpcbin@sha256:bd8f2ffdd02d0849fad2d1c754eff4402c867e7a3e0552b8992f4590f5687d20
+        ports:
+        - containerPort: 9000
+          name: grpc-plain
+        readinessProbe:
+          tcpSocket: {port: 9000}
+          periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grpcbin-v2
+  namespace: apps
+  labels: {app: grpcbin, version: v2}
+spec:
+  selector: {app: grpcbin, version: v2}
+  ports:
+  - name: grpc
+    port: 9000
+    targetPort: 9000
+    appProtocol: grpc

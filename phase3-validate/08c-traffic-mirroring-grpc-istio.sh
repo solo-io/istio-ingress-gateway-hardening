@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# ============================================================================
+# Demo #08c — gRPC mirroring via classic Istio API (VirtualService.spec.mirror)
+# ============================================================================
+#
+# HYPOTHESIS
+#   VirtualService.spec.mirror works for gRPC traffic the same way it does
+#   for HTTP/1.1 (Demo #08a): the primary backend serves all gRPC responses;
+#   the shadow backend receives a fire-and-forget copy of every request.
+#
+#   For gRPC specifically, the question of interest is whether trailers,
+#   gRPC-status, and HTTP/2 stream lifecycle are preserved on the mirror
+#   path. If they're not, the shadow's responses (which are discarded) could
+#   leak failures into Envoy stats or cause client-visible behavior changes.
+#
+# PRODUCT-IMPROVEMENT WATCHPOINTS
+#   Compare upstream_rq_completed counts and any RX/TX irregularities
+#   between primary and shadow clusters. If shadow exhibits a sharply
+#   different completed/error ratio under the same workload, that's an FR
+#   signal: gRPC mirror lacks trailer-aware handling.
+#
+# SETUP / ACTION
+#   - Gateway + VS bound to canary-gateway routing demo08c.example.com →
+#     grpcbin (primary), mirroring 100% to grpcbin-shadow.
+#   - ghz sends 30 unary gRPC calls from the loadgen namespace.
+#
+# VERIFICATION + PASS
+#   - All 30 ghz responses are OK.
+#   - Envoy stats on the canary gateway show primary upstream_rq_completed
+#     grew by ≥30 AND shadow upstream_rq_completed grew by ≥30.
+# ============================================================================
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/cluster-vars.sh"
+source "${SCRIPT_DIR}/../lib/pass-fail.sh"
+
+ensure_cluster_up || exit 1
+
+demo_start "08c" "traffic-mirroring-grpc-istio" \
+  "VS.spec.mirror replicates gRPC traffic to a shadow destination (fire-and-forget)"
+
+TMPDIR_DEMO="$(mktemp -d)"
+cleanup_demo() {
+    rm -rf "${TMPDIR_DEMO}"
+    kctl delete virtualservice demo08c-vs -n apps --ignore-not-found 2>/dev/null
+    kctl delete gateway demo08c-canary-gw -n istio-system --ignore-not-found 2>/dev/null
+}
+trap cleanup_demo EXIT
+
+demo_step "Applying Gateway + VirtualService with route to grpcbin, mirror to grpcbin-shadow (100%)"
+cat > "${TMPDIR_DEMO}/manifests.yaml" <<EOF
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata: {name: demo08c-canary-gw, namespace: istio-system}
+spec:
+  selector: {app: ${GATEWAY_APP_LABEL}, ${TRACK_LABEL_KEY}: ${TRACK_CANARY}}
+  servers:
+  - port: {number: 80, name: http, protocol: HTTP}
+    hosts: ["demo08c.example.com"]
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata: {name: demo08c-vs, namespace: apps}
+spec:
+  hosts: ["demo08c.example.com"]
+  gateways: ["istio-system/demo08c-canary-gw"]
+  http:
+  - match: [{port: 80}]
+    route:
+    - destination:
+        host: grpcbin.apps.svc.cluster.local
+        port: {number: 9000}
+    mirror:
+      host: grpcbin-shadow.apps.svc.cluster.local
+      port: {number: 9000}
+    mirrorPercentage: {value: 100.0}
+EOF
+kctl apply -f "${TMPDIR_DEMO}/manifests.yaml" >/dev/null
+sleep 4
+
+GHZ_POD="$(kctl get pod -n "${LOADGEN_NS}" -l app=ghz -o jsonpath='{.items[0].metadata.name}')"
+# All canary gateway pod names (Service load-balances ghz's single connection
+# to ONE of them; we sum stats across all replicas to find the actual hit pod).
+CANARY_GW_PODS=$(kctl get pod -n istio-system -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY}" -o jsonpath='{.items[*].metadata.name}')
+demo_info "ghz pod:        ${GHZ_POD}"
+demo_info "canary gw pods: ${CANARY_GW_PODS}"
+
+# Sum upstream_rq_completed across ALL canary gateway pods AND across both
+# Envoy stat buckets:
+#   .external. — requests originated by downstream clients (the primary route)
+#   .internal. — requests synthesized internally by Envoy (mirrors fall here)
+# Without summing both buckets, mirror destinations show 0 even when firing.
+_upstream_rq() {
+    local total=0 v
+    for POD in ${CANARY_GW_PODS}; do
+        for BUCKET in external internal; do
+            v=$(kctl exec -n istio-system "${POD}" -c istio-proxy -- \
+                pilot-agent request GET stats 2>/dev/null \
+                | awk -F': ' -v key="cluster.outbound|9000||$1.apps.svc.cluster.local;.${BUCKET}.upstream_rq_completed" \
+                    'index($0, key) > 0 {print $2; exit}' \
+                | tr -d ' ')
+            total=$((total + ${v:-0}))
+        done
+    done
+    echo "${total}"
+}
+
+PRE_PRIMARY=$(_upstream_rq grpcbin); PRE_PRIMARY=${PRE_PRIMARY:-0}
+PRE_SHADOW=$(_upstream_rq grpcbin-shadow); PRE_SHADOW=${PRE_SHADOW:-0}
+demo_info "Pre-load upstream_rq_completed: primary=${PRE_PRIMARY}, shadow=${PRE_SHADOW}"
+
+demo_step "Sending 30 gRPC calls via ghz (DummyUnary)"
+GHZ_OUT="${TMPDIR_DEMO}/ghz.out"
+kctl exec -n "${LOADGEN_NS}" "${GHZ_POD}" -- /usr/local/bin/ghz \
+    --insecure --connections=1 --concurrency=2 --total=30 \
+    --authority=demo08c.example.com \
+    --call=grpcbin.GRPCBin/DummyUnary --data='{}' \
+    "${GATEWAY_APP_LABEL}-${TRACK_CANARY}.${SYSTEM_NS}.svc.cluster.local:80" > "${GHZ_OUT}" 2>&1
+
+# Show ghz summary (status code distribution)
+demo_info "ghz summary:"
+grep -A 3 "Status code distribution" "${GHZ_OUT}" | sed 's/^/        /'
+
+# Allow the mirrored traffic to land on the shadow cluster
+sleep 3
+POST_PRIMARY=$(_upstream_rq grpcbin); POST_PRIMARY=${POST_PRIMARY:-0}
+POST_SHADOW=$(_upstream_rq grpcbin-shadow); POST_SHADOW=${POST_SHADOW:-0}
+PRIMARY_DELTA=$((POST_PRIMARY - PRE_PRIMARY))
+SHADOW_DELTA=$((POST_SHADOW - PRE_SHADOW))
+demo_info "Post-load deltas: primary=${PRIMARY_DELTA}, shadow=${SHADOW_DELTA}"
+
+# ---------------------------------------------------------------------------
+# Assertions
+# ---------------------------------------------------------------------------
+# (a) ghz must report 30/30 OK responses
+OK_COUNT=$(awk '/^  \[OK\]/ {print $2; exit}' "${GHZ_OUT}")
+OK_COUNT=${OK_COUNT:-0}
+if [[ "${OK_COUNT}" -eq 30 ]]; then
+    demo_assert_pass "All 30 ghz responses were OK (mirror is fire-and-forget; client unaffected)"
+else
+    demo_assert_fail "ghz reported ${OK_COUNT}/30 OK; mirror may be affecting client responses"
+fi
+
+# (b) Primary cluster received all 30
+if [[ "${PRIMARY_DELTA}" -ge 30 ]]; then
+    demo_assert_pass "grpcbin primary upstream_rq_completed grew by ${PRIMARY_DELTA} (≥30)"
+else
+    demo_assert_fail "grpcbin primary delta ${PRIMARY_DELTA} < 30"
+fi
+
+# (c) Shadow cluster received all 30 (100% mirror)
+if [[ "${SHADOW_DELTA}" -ge 30 ]]; then
+    demo_assert_pass "grpcbin-shadow upstream_rq_completed grew by ${SHADOW_DELTA} (≥30; mirror firing 100%)"
+else
+    demo_assert_fail "grpcbin-shadow delta ${SHADOW_DELTA} < 30 (mirror not firing)"
+fi
+
+echo ""
+echo "  NOTE (FR signal watchpoint): with 100% mirror, primary and shadow"
+echo "  should have IDENTICAL completed counts. If they diverge under load, "
+echo "  shadow's gRPC trailer / status handling may be incomplete in Envoy. "
+echo "  Compare also against #08a (HTTP/1.1) baseline to see if gRPC-       "
+echo "  specific irregularities surface that don't appear for HTTP/1.1.    "
+demo_end
