@@ -1,3 +1,8 @@
+# Claude stuff
+CLAUDE.md
+.claude/
+claude-docs/
+
 # istioctl binary downloaded by deploy.sh
 istioctl
 istioctl.tar.gz
