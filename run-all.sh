@@ -37,7 +37,7 @@ DEMOS=(
     "10|phase4-recover/10-distribution-tracking.sh|distribution tracking + proxy-status"
     "11|phase4-recover/11-experimental-wait-revert.sh|polling + revert"
     "12|phase5-resilience/12-envoy-listener-warming.sh|listener warming"
-    "13|phase5-resilience/13-xds-push-connection-cycling.sh|xDS push + connection (HTTP/1.1)"
+    "13|phase5-resilience/13-xds-push-track-isolation.sh|xDS push + track isolation (HTTP/1.1)"
     "13b|phase5-resilience/13b-xds-push-http2-sustained.sh|xDS push + connection (HTTP/2)"
     "13c|phase5-resilience/13c-xds-push-grpc-long-lived.sh|xDS push + connection (gRPC)"
 )
@@ -91,7 +91,25 @@ fi
 
 # ---------------------------------------------------------------------------
 # Run demos sequentially, capture per-demo result + duration
+#
+# DEMO_TIMEOUT (default 300s) bounds each demo. A stuck demo (e.g., a port-
+# forward that never establishes, a kubectl exec that hangs) becomes a FAIL
+# with exit 124 instead of wedging the orchestrator. Override per run with
+# DEMO_TIMEOUT=600 ./run-all.sh ...
 # ---------------------------------------------------------------------------
+DEMO_TIMEOUT="${DEMO_TIMEOUT:-300}"
+# Resolve a timeout binary (gtimeout on macOS via coreutils; timeout on Linux).
+# We store it as a plain string, not an array — empty array expansion under
+# `set -u` errors on macOS default bash 3.2.
+if command -v timeout >/dev/null 2>&1; then
+    TIMEOUT_BIN="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_BIN="gtimeout"
+else
+    echo "  ! no timeout(1) found (install GNU coreutils for gtimeout on macOS); demos will run unbounded"
+    TIMEOUT_BIN=""
+fi
+
 RESULTS=()
 START_ALL=$(date +%s)
 for ROW in "${SELECTED[@]}"; do
@@ -102,17 +120,21 @@ for ROW in "${SELECTED[@]}"; do
         continue
     fi
     START=$(date +%s)
-    "${SCRIPT}" > "/tmp/run-all-${ID}.log" 2>&1
+    if [[ -n "${TIMEOUT_BIN}" ]]; then
+        "${TIMEOUT_BIN}" "${DEMO_TIMEOUT}" "${SCRIPT}" > "/tmp/run-all-${ID}.log" 2>&1
+    else
+        "${SCRIPT}" > "/tmp/run-all-${ID}.log" 2>&1
+    fi
     RC=$?
     DUR=$(($(date +%s) - START))
     if [[ ${RC} -eq 0 ]]; then
         RESULTS+=("${ID}|PASS|${DUR}|${LABEL}")
+        echo "  ✓ ${ID} PASS (${DUR}s) — ${LABEL}"
+    elif [[ ${RC} -eq 124 ]]; then
+        RESULTS+=("${ID}|TIMEOUT|${DUR}|${LABEL}")
+        echo "  ⏱ ${ID} TIMEOUT (${DUR}s, killed after ${DEMO_TIMEOUT}s) — ${LABEL}    [log: /tmp/run-all-${ID}.log]"
     else
         RESULTS+=("${ID}|FAIL|${DUR}|${LABEL}")
-    fi
-    if [[ ${RC} -eq 0 ]]; then
-        echo "  ✓ ${ID} PASS (${DUR}s) — ${LABEL}"
-    else
         echo "  ✗ ${ID} FAIL (${DUR}s) — ${LABEL}    [log: /tmp/run-all-${ID}.log]"
     fi
 done
@@ -139,19 +161,23 @@ echo "  Summary (${TOTAL_DUR}s total)"
 echo "════════════════════════════════════════════════════════════════════════"
 PASS_COUNT=0
 FAIL_COUNT=0
-printf "  %-5s  %-6s  %5s  %s\n" "ID" "STATUS" "TIME" "LABEL"
+TIMEOUT_COUNT=0
+printf "  %-5s  %-7s  %5s  %s\n" "ID" "STATUS" "TIME" "LABEL"
 echo "  ──────────────────────────────────────────────────────────────────"
 for R in "${RESULTS[@]}"; do
     IFS='|' read -r ID STATUS DUR LABEL <<< "${R}"
-    printf "  %-5s  %-6s  %5ss  %s\n" "${ID}" "${STATUS}" "${DUR}" "${LABEL}"
-    [[ "${STATUS}" == "PASS" ]] && PASS_COUNT=$((PASS_COUNT+1))
-    [[ "${STATUS}" == "FAIL" ]] && FAIL_COUNT=$((FAIL_COUNT+1))
+    printf "  %-5s  %-7s  %5ss  %s\n" "${ID}" "${STATUS}" "${DUR}" "${LABEL}"
+    case "${STATUS}" in
+        PASS)    PASS_COUNT=$((PASS_COUNT+1)) ;;
+        FAIL)    FAIL_COUNT=$((FAIL_COUNT+1)) ;;
+        TIMEOUT) TIMEOUT_COUNT=$((TIMEOUT_COUNT+1)) ;;
+    esac
 done
 echo "  ──────────────────────────────────────────────────────────────────"
-echo "  PASS: ${PASS_COUNT}  FAIL: ${FAIL_COUNT}  Total: ${#RESULTS[@]}"
+echo "  PASS: ${PASS_COUNT}  FAIL: ${FAIL_COUNT}  TIMEOUT: ${TIMEOUT_COUNT}  Total: ${#RESULTS[@]}"
 echo ""
-if [[ ${FAIL_COUNT} -gt 0 ]]; then
-    echo "Failed demo logs: /tmp/run-all-<id>.log"
+if [[ $((FAIL_COUNT + TIMEOUT_COUNT)) -gt 0 ]]; then
+    echo "Non-passing demo logs: /tmp/run-all-<id>.log"
     exit 1
 fi
 exit 0

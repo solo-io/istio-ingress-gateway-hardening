@@ -75,7 +75,7 @@ spec:
     - destination: {host: httpbin-v1.apps.svc.cluster.local, port: {number: 8000}}
 EOF
 kctl apply -f "${TMPDIR_DEMO}/setup.yaml" >/dev/null
-sleep 3
+wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 2: identify pods + baseline log counts

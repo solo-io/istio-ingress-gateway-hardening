@@ -33,9 +33,9 @@
 #
 # PRODUCT-IMPROVEMENT NOTE
 #   This graceful-degradation behavior is Envoy's default but is rarely
-#   documented in Solo / Istio operator-facing material. PLAN.md FR
-#   candidate: docs page on "what gracefully degrades and what doesn't
-#   during a bad xDS push to a gateway."
+#   documented in Solo / Istio operator-facing material. A docs page on
+#   "what gracefully degrades and what doesn't during a bad xDS push to a
+#   gateway" would surface the behaviors operators can rely on.
 # ============================================================================
 set -uo pipefail
 
@@ -95,18 +95,11 @@ spec:
           number: 8000
 EOF
 kctl apply -f "${TMPDIR_DEMO}/baseline.yaml" >/dev/null
-sleep 4
+wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 LOCAL_PORT=18712
-# Use `kubectl` directly (not the kctl function wrapper) so $! captures the
-# real kubectl PID. Backgrounding a bash function returns the subshell PID
-# instead, and the cleanup trap's `kill ${PF_PID}` would kill the wrapper
-# but leave the kubectl child orphaned, holding the port.
-kubectl --context "${CONTEXT}" port-forward -n istio-system \
-    "svc/${GATEWAY_APP_LABEL}-${TRACK_CANARY}" "${LOCAL_PORT}:80" >/dev/null 2>&1 &
-PF_PID=$!
-sleep 2
-kill -0 "${PF_PID}" 2>/dev/null || { demo_assert_fail "port-forward died"; demo_end; exit $?; }
+PF_PID="$(start_port_forward "${SYSTEM_NS}" "svc/${GATEWAY_APP_LABEL}-${TRACK_CANARY}" "${LOCAL_PORT}:80")" \
+    || { demo_assert_fail "port-forward died"; demo_end; exit $?; }
 
 # Send 5 baseline requests
 demo_step "Sending 5 baseline requests via canary gateway (expect all 200)"

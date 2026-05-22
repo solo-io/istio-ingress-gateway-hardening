@@ -11,14 +11,13 @@
 #   the same gate behavior the (now-removed) `istioctl experimental wait`
 #   command used to provide.
 #
-# CRITICAL ITERATION FINDING (changes PLAN.md FR signals)
+# CRITICAL ITERATION FINDING
 #   `istioctl experimental wait --for=distribution` was REMOVED in Istio 1.27.
 #   It is not present under `istioctl wait`, `istioctl experimental wait`,
 #   or any other top-level command in 1.27.8 (`istioctl --help` confirms).
-#   PLAN.md referenced this command as a CD-pipeline gate; this demo now
-#   demonstrates the replacement pattern (polling proxy-status) and surfaces
-#   the removal as a STRONG product-improvement signal: a CD-critical
-#   command was dropped without a documented replacement.
+#   This demo demonstrates the replacement pattern (polling proxy-status)
+#   and surfaces the removal as a strong product-improvement signal: a
+#   CD-critical command was dropped without a documented replacement.
 #
 # SETUP / VERIFICATION / PASS
 #   - Apply VS-v1, poll proxy-status until SYNCED, verify routing to v1
@@ -115,40 +114,16 @@ done
 
 # port-forward to canary gateway for traffic verification
 LOCAL_PORT=18793
-# Use `kubectl` directly (not the kctl function wrapper) so $! captures the
-# real kubectl PID. Backgrounding a bash function returns the subshell PID
-# instead, and the cleanup trap's `kill ${PF_PID}` would kill the wrapper
-# but leave the kubectl child orphaned, holding the port.
-kubectl --context "${CONTEXT}" port-forward -n istio-system \
-    "svc/${GATEWAY_APP_LABEL}-${TRACK_CANARY}" "${LOCAL_PORT}:80" >/dev/null 2>&1 &
-PF_PID=$!
-sleep 2
+PF_PID="$(start_port_forward "${SYSTEM_NS}" "svc/${GATEWAY_APP_LABEL}-${TRACK_CANARY}" "${LOCAL_PORT}:80")" \
+    || { demo_assert_fail "port-forward died"; demo_end; exit $?; }
 
 V1_POD="$(kctl get pod -n apps -l app=httpbin,version=v1 -o jsonpath='{.items[0].metadata.name}')"
 V2_POD="$(kctl get pod -n apps -l app=httpbin,version=v2 -o jsonpath='{.items[0].metadata.name}')"
 _logcount() { kctl logs -n apps "$1" 2>/dev/null | wc -l | tr -d ' '; }
 
-# Helper: poll proxy-status until all canary gateway pods report fully SYNCED
-# (the documented CD-gate replacement for the removed 'experimental wait').
-# Returns 0 on SYNCED, 1 on timeout.
-wait_until_synced() {
-    local timeout=${1:-30}
-    local start=$(date +%s)
-    while [[ $(($(date +%s) - start)) -lt ${timeout} ]]; do
-        local ps_output
-        ps_output="$("${ISTIOCTL}" --context "${CONTEXT}" proxy-status 2>/dev/null | grep "ingress-gw-${TRACK_CANARY}")"
-        # Each canary pod row should NOT contain STALE or NOT SENT
-        local stale_count
-        stale_count="$(echo "${ps_output}" | grep -cE "STALE|NOT SENT" || true)"
-        local pod_count
-        pod_count="$(echo "${ps_output}" | wc -l | tr -d ' ')"
-        if [[ "${stale_count}" -eq 0 ]] && [[ "${pod_count}" -ge 1 ]]; then
-            return 0
-        fi
-        sleep 1
-    done
-    return 1
-}
+# wait_until_synced is provided by lib/pass-fail.sh — polls proxy-status
+# until canary gateway pods report fully SYNCED. This is the documented
+# CD-gate replacement for the removed 'experimental wait'.
 
 run_traffic_and_check_backend() {
     # $1 = expected backend pod, $2 = name of expected backend for messages
@@ -174,7 +149,7 @@ run_traffic_and_check_backend() {
 demo_step "Forward path: applying VS-v1, polling proxy-status until SYNCED"
 kctl apply -f "${TMPDIR_DEMO}/vs-v1.yaml" >/dev/null
 WAIT_START=$(date +%s)
-if wait_until_synced 30; then
+if wait_until_synced "ingress-gw-${TRACK_CANARY}" 30; then
     WAIT_ELAPSED=$(( $(date +%s) - WAIT_START ))
     demo_assert_pass "Forward-path proxy-status SYNCED in ${WAIT_ELAPSED}s"
 else
@@ -194,7 +169,7 @@ fi
 demo_step "Candidate path: applying VS-v2 (overwrites v1), polling until SYNCED"
 kctl apply -f "${TMPDIR_DEMO}/vs-v2.yaml" >/dev/null
 WAIT_START=$(date +%s)
-if wait_until_synced 30; then
+if wait_until_synced "ingress-gw-${TRACK_CANARY}" 30; then
     demo_info "Candidate SYNCED in $(( $(date +%s) - WAIT_START ))s"
 else
     demo_info "Candidate SYNCED timeout"
@@ -212,7 +187,7 @@ fi
 demo_step "Revert path: re-applying VS-v1 (simulating git revert), polling"
 kctl apply -f "${TMPDIR_DEMO}/vs-v1.yaml" >/dev/null
 WAIT_START=$(date +%s)
-if wait_until_synced 30; then
+if wait_until_synced "ingress-gw-${TRACK_CANARY}" 30; then
     WAIT_ELAPSED=$(( $(date +%s) - WAIT_START ))
     demo_assert_pass "Revert-path proxy-status SYNCED in ${WAIT_ELAPSED}s"
 else

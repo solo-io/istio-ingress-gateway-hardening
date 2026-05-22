@@ -99,17 +99,11 @@ for i in $(seq 1 60); do
     sleep 1
 done
 [[ "${READY:-0}" -lt 1 ]] && { demo_assert_fail "Istio did not provision backing pod in 60s"; demo_end; exit $?; }
-sleep 3
+wait_until_synced "demo09b-gw-istio" 30 || true
 
 LOCAL_PORT=18692
-# Use `kubectl` directly (not the kctl function wrapper) so $! captures the
-# real kubectl PID. Backgrounding a bash function returns the subshell PID
-# instead, and the cleanup trap's `kill ${PF_PID}` would kill the wrapper
-# but leave the kubectl child orphaned, holding the port.
-kubectl --context "${CONTEXT}" port-forward -n apps "svc/demo09b-gw-istio" "${LOCAL_PORT}:80" >/dev/null 2>&1 &
-PF_PID=$!
-sleep 2
-kill -0 "${PF_PID}" 2>/dev/null || { demo_assert_fail "port-forward died"; demo_end; exit $?; }
+PF_PID="$(start_port_forward "${APPS_NS}" "svc/demo09b-gw-istio" "${LOCAL_PORT}:80")" \
+    || { demo_assert_fail "port-forward died"; demo_end; exit $?; }
 
 V1_POD="$(kctl get pod -n apps -l app=httpbin,version=v1 -o jsonpath='{.items[0].metadata.name}')"
 V2_POD="$(kctl get pod -n apps -l app=httpbin,version=v2 -o jsonpath='{.items[0].metadata.name}')"

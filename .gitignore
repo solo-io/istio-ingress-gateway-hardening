@@ -2,6 +2,7 @@
 CLAUDE.md
 .claude/
 claude-docs/
+session.sh
 
 # istioctl binary downloaded by deploy.sh
 istioctl

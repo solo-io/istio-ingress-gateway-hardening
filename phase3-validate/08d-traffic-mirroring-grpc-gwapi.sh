@@ -109,7 +109,7 @@ for i in $(seq 1 60); do
     sleep 1
 done
 [[ "${READY:-0}" -lt 1 ]] && { demo_assert_fail "Istio did not provision backing pod in 60s"; demo_end; exit $?; }
-sleep 4
+wait_until_synced "demo08d-gw-istio" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 2: identify pods and capture baseline upstream_rq stats
@@ -119,28 +119,13 @@ GW_PODS=$(kctl get pod -n apps -l "gateway.networking.k8s.io/gateway-name=demo08
 demo_info "ghz pod:    ${GHZ_POD}"
 demo_info "gwapi pods: ${GW_PODS}"
 
-# Auto-provisioned gateway pods may be on `apps` (ambient) or have specific
-# istio-proxy injection; pilot-agent admin is on port 15000.
-# Sum upstream_rq_completed across both external/internal buckets on all
-# auto-provisioned gateway pods (a Gateway API Gateway often deploys 1
-# replica by default but we iterate for safety).
-_upstream_rq() {
-    local total=0 v
-    for POD in ${GW_PODS}; do
-        for BUCKET in external internal; do
-            v=$(kctl exec -n apps "${POD}" -c istio-proxy -- \
-                pilot-agent request GET stats 2>/dev/null \
-                | awk -F': ' -v key="cluster.outbound|9000||$1.apps.svc.cluster.local;.${BUCKET}.upstream_rq_completed" \
-                    'index($0, key) > 0 {print $2; exit}' \
-                | tr -d ' ')
-            total=$((total + ${v:-0}))
-        done
-    done
-    echo "${total}"
-}
+# envoy_upstream_rq (from lib/pass-fail.sh) sums across both external+internal
+# buckets on every auto-provisioned gateway pod (Gateway API typically deploys
+# 1 replica but we iterate for safety).
+_rq() { envoy_upstream_rq "$1" "${APPS_NS}" 9000 "${APPS_NS}" "${GW_PODS}"; }
 
-PRE_PRIMARY=$(_upstream_rq grpcbin); PRE_PRIMARY=${PRE_PRIMARY:-0}
-PRE_SHADOW=$(_upstream_rq grpcbin-shadow); PRE_SHADOW=${PRE_SHADOW:-0}
+PRE_PRIMARY=$(_rq grpcbin); PRE_PRIMARY=${PRE_PRIMARY:-0}
+PRE_SHADOW=$(_rq grpcbin-shadow); PRE_SHADOW=${PRE_SHADOW:-0}
 demo_info "Pre-load upstream_rq_completed: primary=${PRE_PRIMARY}, shadow=${PRE_SHADOW}"
 
 # ---------------------------------------------------------------------------
@@ -158,8 +143,8 @@ demo_info "ghz summary:"
 grep -A 3 "Status code distribution" "${GHZ_OUT}" | sed 's/^/        /'
 sleep 3
 
-POST_PRIMARY=$(_upstream_rq grpcbin); POST_PRIMARY=${POST_PRIMARY:-0}
-POST_SHADOW=$(_upstream_rq grpcbin-shadow); POST_SHADOW=${POST_SHADOW:-0}
+POST_PRIMARY=$(_rq grpcbin); POST_PRIMARY=${POST_PRIMARY:-0}
+POST_SHADOW=$(_rq grpcbin-shadow); POST_SHADOW=${POST_SHADOW:-0}
 PRIMARY_DELTA=$((POST_PRIMARY - PRE_PRIMARY))
 SHADOW_DELTA=$((POST_SHADOW - PRE_SHADOW))
 demo_info "Post-load deltas: primary=${PRIMARY_DELTA}, shadow=${SHADOW_DELTA}"

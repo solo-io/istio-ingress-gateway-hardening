@@ -17,19 +17,19 @@
 #   - Capture post-toggle cluster count.
 #
 # PASS CRITERION
-#   Cluster count reduction ≥ 30% (per PLAN.md DoD).
+#   Cluster count reduction ≥ 30%.
 #
 # IMPORTANT
 #   This demo modifies istiod's env vars. Cleanup reverts the change so
-#   subsequent demos start from a known state. If run inside run-all.sh,
-#   the env var is already on (batched at orchestration step 3) and this
-#   demo just measures the delta against the pre-toggle baseline captured
-#   earlier.
+#   subsequent demos start from a known state. Unlike PILOT_ENABLE_*
+#   (which run-all.sh batches up front), PILOT_FILTER_GATEWAY_CLUSTER_CONFIG
+#   is toggled by this demo directly — run-all.sh deliberately leaves it
+#   off so we can measure the pre/post delta from a clean baseline.
 #
 # PRODUCT-IMPROVEMENT NOTE
 #   Per istio#54443, this flag is mesh-wide only — no per-Gateway tunability.
 #   A Solo-specific per-Gateway annotation would let teams adopt this
-#   filter incrementally per gateway. Captured in PLAN.md FR signals.
+#   filter incrementally per gateway rather than all-or-nothing.
 # ============================================================================
 set -uo pipefail
 
@@ -96,7 +96,7 @@ spec:
           number: 8000
 EOF
 kctl apply -f "${TMPDIR_DEMO}/manifests.yaml" >/dev/null
-sleep 3
+wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 2: capture pre-toggle baseline cluster count
@@ -121,7 +121,7 @@ kctl rollout status deployment/istiod -n istio-system --timeout=120s >/dev/null
 demo_info "istiod rolled out with new env var"
 
 # Gateway pods need to reconnect to istiod and receive filtered xDS
-sleep 8
+wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 4: capture post-toggle cluster count (re-resolve pod in case it

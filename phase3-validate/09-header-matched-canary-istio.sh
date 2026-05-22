@@ -84,22 +84,11 @@ spec:
           number: 8000
 EOF
 kctl apply -f "${TMPDIR_DEMO}/manifests.yaml" >/dev/null
-sleep 3
+wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 LOCAL_PORT=18691
-# Use `kubectl` directly (not the kctl function wrapper) so $! captures the
-# real kubectl PID. Backgrounding a bash function returns the subshell PID
-# instead, and the cleanup trap's `kill ${PF_PID}` would kill the wrapper
-# but leave the kubectl child orphaned, holding the port.
-kubectl --context "${CONTEXT}" port-forward -n istio-system \
-    "svc/${GATEWAY_APP_LABEL}-${TRACK_CANARY}" "${LOCAL_PORT}:80" >/dev/null 2>&1 &
-PF_PID=$!
-sleep 2
-if ! kill -0 "${PF_PID}" 2>/dev/null; then
-    demo_assert_fail "port-forward died"
-    demo_end
-    exit $?
-fi
+PF_PID="$(start_port_forward "${SYSTEM_NS}" "svc/${GATEWAY_APP_LABEL}-${TRACK_CANARY}" "${LOCAL_PORT}:80")" \
+    || { demo_assert_fail "port-forward died"; demo_end; exit $?; }
 
 V1_POD="$(kctl get pod -n apps -l app=httpbin,version=v1 -o jsonpath='{.items[0].metadata.name}')"
 V2_POD="$(kctl get pod -n apps -l app=httpbin,version=v2 -o jsonpath='{.items[0].metadata.name}')"

@@ -27,8 +27,8 @@
 # PRODUCT-IMPROVEMENT NOTE
 #   The Gateway API uses per-listener `allowedRoutes` semantics rather than
 #   workload selectors. Same outcome reached differently; the cross-API
-#   parity story for scoping primitives is documented in PLAN.md as an FR
-#   candidate.
+#   parity story for scoping primitives is worth a docs page so migrators
+#   know what changes and what doesn't.
 # ============================================================================
 set -uo pipefail
 
@@ -129,8 +129,8 @@ spec:
 EOF
 kctl apply -f "${TMPDIR_DEMO}/route.yaml" >/dev/null
 
-# Allow istiod time to push config
-sleep 4
+# Wait for istiod to push to the auto-provisioned gateway pods (both prod + canary).
+wait_until_synced "demo05b-" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 4: inspect routes on each Gateway-API-provisioned pod

@@ -2,20 +2,24 @@
 # ============================================================================
 # lib/grafana-snapshot.sh -- Capture Grafana dashboard snapshots during demos.
 #
+# ⚠ UNUSED — preserved for future revival.
+#
+#   No demo currently sources this file; automated rendering was abandoned
+#   because Grafana's image-renderer sidecar returns empty data series
+#   under JWT-authenticated headless Chromium (the same queries return data
+#   via the interactive UI). The interactive dashboard described in the
+#   README is the supported snapshot path. Keep this code in case the
+#   renderer regression gets fixed upstream.
+#
 # Uses Grafana's /render endpoint (powered by the image-renderer sidecar
 # Helm-managed in the monitoring namespace) to capture PNG snapshots of
 # the Istio IGW hardening dashboard at specific time windows.
 #
-# Snapshots are written under reproducer/snapshots/<demo-id>/.
+# Snapshots would be written under snapshots/<demo-id>/.
 #
-# Usage in a demo:
+# Intended usage in a demo:
 #   source "$(dirname "${BASH_SOURCE[0]}")/../lib/grafana-snapshot.sh"
 #   snapshot_grafana <demo-id> <label> [from-seconds-ago] [to-seconds-ago]
-#
-# Example:
-#   snapshot_grafana 13b "post-run" 60 0   # snapshot from 60s ago to now
-#
-# Snapshot files are named: snapshots/<demo-id>/<demo-id>-<label>-<timestamp>.png
 # ============================================================================
 
 # Lazy port-forward setup: start a Grafana port-forward once per shell, reuse.

@@ -77,7 +77,7 @@ spec:
     mirrorPercentage: {value: 100.0}
 EOF
 kctl apply -f "${TMPDIR_DEMO}/manifests.yaml" >/dev/null
-sleep 4
+wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 GHZ_POD="$(kctl get pod -n "${LOADGEN_NS}" -l app=ghz -o jsonpath='{.items[0].metadata.name}')"
 # All canary gateway pod names (Service load-balances ghz's single connection
@@ -86,28 +86,13 @@ CANARY_GW_PODS=$(kctl get pod -n istio-system -l "app=${GATEWAY_APP_LABEL},${TRA
 demo_info "ghz pod:        ${GHZ_POD}"
 demo_info "canary gw pods: ${CANARY_GW_PODS}"
 
-# Sum upstream_rq_completed across ALL canary gateway pods AND across both
-# Envoy stat buckets:
-#   .external. — requests originated by downstream clients (the primary route)
-#   .internal. — requests synthesized internally by Envoy (mirrors fall here)
-# Without summing both buckets, mirror destinations show 0 even when firing.
-_upstream_rq() {
-    local total=0 v
-    for POD in ${CANARY_GW_PODS}; do
-        for BUCKET in external internal; do
-            v=$(kctl exec -n istio-system "${POD}" -c istio-proxy -- \
-                pilot-agent request GET stats 2>/dev/null \
-                | awk -F': ' -v key="cluster.outbound|9000||$1.apps.svc.cluster.local;.${BUCKET}.upstream_rq_completed" \
-                    'index($0, key) > 0 {print $2; exit}' \
-                | tr -d ' ')
-            total=$((total + ${v:-0}))
-        done
-    done
-    echo "${total}"
-}
+# envoy_upstream_rq (from lib/pass-fail.sh) sums upstream_rq_completed across
+# all canary gateway pods AND both Envoy stat buckets (.external + .internal —
+# mirror traffic lands in .internal).
+_rq() { envoy_upstream_rq "$1" "${APPS_NS}" 9000 "${SYSTEM_NS}" "${CANARY_GW_PODS}"; }
 
-PRE_PRIMARY=$(_upstream_rq grpcbin); PRE_PRIMARY=${PRE_PRIMARY:-0}
-PRE_SHADOW=$(_upstream_rq grpcbin-shadow); PRE_SHADOW=${PRE_SHADOW:-0}
+PRE_PRIMARY=$(_rq grpcbin); PRE_PRIMARY=${PRE_PRIMARY:-0}
+PRE_SHADOW=$(_rq grpcbin-shadow); PRE_SHADOW=${PRE_SHADOW:-0}
 demo_info "Pre-load upstream_rq_completed: primary=${PRE_PRIMARY}, shadow=${PRE_SHADOW}"
 
 demo_step "Sending 30 gRPC calls via ghz (DummyUnary)"
@@ -124,8 +109,8 @@ grep -A 3 "Status code distribution" "${GHZ_OUT}" | sed 's/^/        /'
 
 # Allow the mirrored traffic to land on the shadow cluster
 sleep 3
-POST_PRIMARY=$(_upstream_rq grpcbin); POST_PRIMARY=${POST_PRIMARY:-0}
-POST_SHADOW=$(_upstream_rq grpcbin-shadow); POST_SHADOW=${POST_SHADOW:-0}
+POST_PRIMARY=$(_rq grpcbin); POST_PRIMARY=${POST_PRIMARY:-0}
+POST_SHADOW=$(_rq grpcbin-shadow); POST_SHADOW=${POST_SHADOW:-0}
 PRIMARY_DELTA=$((POST_PRIMARY - PRE_PRIMARY))
 SHADOW_DELTA=$((POST_SHADOW - PRE_SHADOW))
 demo_info "Post-load deltas: primary=${PRIMARY_DELTA}, shadow=${SHADOW_DELTA}"

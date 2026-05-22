@@ -105,8 +105,8 @@ spec:
 EOF
 kctl apply -f "${TMPDIR_DEMO}/vs.yaml" >/dev/null
 
-# Give istiod time to push config to gateway pods
-sleep 3
+# Wait for istiod to push to canary pods (replaces a fragile bare sleep).
+wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 3: pick one prod pod and one canary pod, inspect routes

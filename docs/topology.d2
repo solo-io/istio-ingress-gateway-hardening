@@ -1,0 +1,73 @@
+# Source for the topology diagram in README.md.
+# Render with:
+#   d2 docs/topology.d2 docs/topology.svg
+# (run from repo root)
+
+direction: down
+
+cluster: k3d cluster\nk3d-istio-igw-hardening · K8s 1.30.6\nIstio 1.27.8 ambient · Gateway API v1.2.1 {
+  style.font-size: 16
+  style.bold: true
+
+  sys: istio-system\n(non-ambient) {
+    style.fill: "#fff3e0"
+    style.stroke: "#ef6c00"
+
+    prod: ingress-gw-prod\n×3 replicas · track=prod {
+      shape: rectangle
+    }
+    canary: ingress-gw-canary\n×3 replicas · track=canary {
+      shape: rectangle
+    }
+    stats: proxyStatsMatcher annotation\n(broader stats inclusion for demos)
+  }
+
+  apps: apps\n(ambient) {
+    style.fill: "#e3f2fd"
+    style.stroke: "#1565c0"
+
+    httpbin: httpbin\nv1 · v2 · shadow {
+      shape: rectangle
+    }
+    grpcbin: grpcbin\nprimary · shadow · v2 {
+      shape: rectangle
+    }
+  }
+
+  # `extras` is intentionally child-less — the namespaces it covers carry
+  # no demo-relevant workloads, so they're folded into the label rather than
+  # broken out as individual nodes. Dashed stroke distinguishes it visually
+  # from the populated subgraphs.
+  extras: apps-ns-a · apps-ns-b · dummy-services ×5\n(all ambient) {
+    style.fill: "#e3f2fd"
+    style.stroke: "#1565c0"
+    style.stroke-dash: 4
+  }
+
+  loadgen: loadgen\n(intentionally non-ambient) {
+    style.fill: "#fff3e0"
+    style.stroke: "#ef6c00"
+
+    h2: h2dial-light (idle) {
+      shape: rectangle
+    }
+    ghz: ghz (idle · sleep ∞) {
+      shape: rectangle
+    }
+  }
+
+  monitoring: monitoring {
+    style.fill: "#f3e5f5"
+    style.stroke: "#6a1b9a"
+
+    prom: kube-prom-stack\nPrometheus · Grafana · image-renderer {
+      shape: rectangle
+    }
+    dash: Dashboard\nigw-hardening {
+      shape: rectangle
+    }
+  }
+
+  loadgen -> sys: L7 ingress\ntraffic
+  sys <-> apps: routes via xDS
+}

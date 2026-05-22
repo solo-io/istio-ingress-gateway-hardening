@@ -12,7 +12,7 @@
 #   The Gateway API `RequestMirror` filter does NOT include a percentage
 #   field. The classic Istio API's `mirrorPercentage` (used in #08a) allows
 #   fractional mirroring. This demo confirms the parity gap: the API works,
-#   but you can't sub-sample. Captured in PLAN.md FR signals.
+#   but you can't sub-sample.
 #
 # SETUP
 #   - Apply a Gateway API Gateway in apps (Istio auto-provisions backing pod)
@@ -100,23 +100,16 @@ for i in $(seq 1 60); do
 done
 [[ "${READY:-0}" -lt 1 ]] && { demo_assert_fail "Istio did not provision backing pod in 60s"; demo_end; exit $?; }
 
-# Allow istiod to push xDS to the new gateway pod
-sleep 4
+# Allow istiod to push xDS to the new gateway pod.
+wait_until_synced "demo08b-gw-istio" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 2: port-forward to the auto-provisioned gateway Service
 # ---------------------------------------------------------------------------
 demo_step "Establishing port-forward to demo08b-gw-istio Service"
 LOCAL_PORT=18682
-# Direct kubectl, not kctl, so $! captures the real PID (per Phase 3 learning)
-kubectl --context "${CONTEXT}" port-forward -n apps "svc/demo08b-gw-istio" "${LOCAL_PORT}:80" >/dev/null 2>&1 &
-PF_PID=$!
-sleep 2
-if ! kill -0 "${PF_PID}" 2>/dev/null; then
-    demo_assert_fail "port-forward to demo08b-gw-istio died (PID ${PF_PID})"
-    demo_end
-    exit $?
-fi
+PF_PID="$(start_port_forward "${APPS_NS}" "svc/demo08b-gw-istio" "${LOCAL_PORT}:80")" \
+    || { demo_assert_fail "port-forward to demo08b-gw-istio failed"; demo_end; exit $?; }
 demo_info "port-forward localhost:${LOCAL_PORT} -> demo08b-gw-istio:80 (pid=${PF_PID})"
 
 # ---------------------------------------------------------------------------

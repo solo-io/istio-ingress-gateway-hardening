@@ -23,7 +23,8 @@
 #   Gateway API does NOT have a direct exportTo equivalent on routing
 #   resources. Closest analogue is `Gateway.spec.listeners[].allowedRoutes.namespaces`
 #   on the receiving Gateway, which is a Gateway-side control rather than
-#   a resource-side control. Structural parity gap; captured in PLAN.md.
+#   a resource-side control. Structural parity gap worth surfacing to teams
+#   evaluating the migration.
 # ============================================================================
 set -uo pipefail
 
@@ -85,7 +86,7 @@ spec:
           number: 8000
 EOF
 kctl apply -f "${TMPDIR_DEMO}/manifests.yaml" >/dev/null
-sleep 4
+wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 2: assert route is present on canary pod (exportTo=["*"])
@@ -104,7 +105,7 @@ fi
 # ---------------------------------------------------------------------------
 demo_step "Patching VirtualService.spec.exportTo to ['.'] (own namespace only)"
 kctl patch virtualservice demo06-vs -n "${APPS_NS_A}" --type=merge -p '{"spec":{"exportTo":["."]}}' >/dev/null
-sleep 4
+wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${CANARY_POD}.istio-system" 2>/dev/null || true)"
 if echo "${ROUTES}" | grep -qi "demo06.example.com"; then
@@ -119,7 +120,7 @@ fi
 # ---------------------------------------------------------------------------
 demo_step "Reverting exportTo back to ['*'] (control: route should reappear)"
 kctl patch virtualservice demo06-vs -n "${APPS_NS_A}" --type=merge -p '{"spec":{"exportTo":["*"]}}' >/dev/null
-sleep 4
+wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${CANARY_POD}.istio-system" 2>/dev/null || true)"
 if echo "${ROUTES}" | grep -qi "demo06.example.com"; then

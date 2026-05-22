@@ -23,8 +23,8 @@
 #
 # PRODUCT-IMPROVEMENT NOTE
 #   The fact that this requires a separate `analyze` step rather than being
-#   built into the admission chain is the gap surfaced as a FR candidate in
-#   PLAN.md ("Solo admission-webhook variant that runs analyze server-side").
+#   built into the admission chain is the underlying gap: a Solo
+#   admission-webhook variant that runs analyze server-side would close it.
 # ============================================================================
 set -uo pipefail
 
@@ -46,7 +46,21 @@ demo_step "Rendering a candidate VirtualService with a dangling destination.host
 TMPDIR_DEMO02="$(mktemp -d)"
 DANGLING_YAML="${TMPDIR_DEMO02}/dangling.yaml"
 trap 'rm -rf "${TMPDIR_DEMO02}"' EXIT
+# Include the Gateway in the same file so the only dangling reference is
+# the destination.host — otherwise istioctl analyze flags the Gateway ref
+# too, and the destination-specific signal gets buried in unrelated noise.
 cat > "${DANGLING_YAML}" <<'EOF'
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: demo02-canary-gw
+  namespace: istio-system
+spec:
+  selector: {app: ingress-gw, track: canary}
+  servers:
+  - port: {number: 80, name: http, protocol: HTTP}
+    hosts: ["dangling.example.com"]
+---
 apiVersion: networking.istio.io/v1
 kind: VirtualService
 metadata:
@@ -54,7 +68,7 @@ metadata:
   namespace: apps
 spec:
   hosts: ["dangling.example.com"]
-  gateways: ["canary-gateway"]
+  gateways: ["istio-system/demo02-canary-gw"]
   http:
   - route:
     - destination:
@@ -82,11 +96,12 @@ else
     demo_assert_fail "istioctl analyze exited zero; CI gate would not catch this"
 fi
 
-# (b) Output names the dangling reference SPECIFICALLY (not unrelated IST0118
-#     port-naming warnings from cluster-state analysis). Look for the actual
-#     reference string OR IST0101 (ReferencedResourceNotFound).
-if echo "${ANALYZE_OUTPUT}" | grep -qiE "this-service-truly-does-not-exist|IST0101"; then
-    demo_assert_pass "Output specifically identifies the dangling reference (IST0101 or hostname match)"
+# (b) Output names the dangling DESTINATION specifically. We require BOTH the
+#     IST0101 code AND the literal destination hostname, so unrelated IST0101s
+#     (e.g., from cluster-state warnings) can't accidentally satisfy the assertion.
+if echo "${ANALYZE_OUTPUT}" | grep -qi "IST0101" \
+   && echo "${ANALYZE_OUTPUT}" | grep -qi "this-service-truly-does-not-exist"; then
+    demo_assert_pass "Output specifically identifies the dangling destination host (IST0101 + literal hostname)"
 else
     demo_assert_fail "Output did not specifically identify the dangling destination host"
 fi

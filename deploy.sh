@@ -42,7 +42,7 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# [2/9] Create k3d cluster (Traefik disabled per L001; ports for ingress)
+# [2/9] Create k3d cluster (Traefik disabled so it doesn't fight our gateway; ports for ingress)
 # ----------------------------------------------------------------------------
 if k3d cluster list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "${CLUSTER_NAME}"; then
     echo "[2/9] Cluster '${CLUSTER_NAME}' already exists"
@@ -71,7 +71,7 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# [4/9] Install Istio (ambient profile, k3d CNI paths per L002)
+# [4/9] Install Istio (ambient profile; k3d uses non-default CNI paths)
 # ----------------------------------------------------------------------------
 if kctl get deployment istiod -n "${SYSTEM_NS}" &>/dev/null; then
     echo "[4/9] Istio already installed"
@@ -147,7 +147,7 @@ spec:
       containers:
       - name: httpbin
         image: mccutchen/go-httpbin:v2.15.0
-        # L007: mccutchen/go-httpbin uses CMD not ENTRYPOINT; explicit command needed
+        # mccutchen/go-httpbin uses CMD not ENTRYPOINT; we set command explicitly
         command: ["/bin/go-httpbin"]
         args: ["-port=8080", "-max-body-size=20971520"]
         ports:
@@ -208,13 +208,36 @@ done
 # [7c/9] Build and import h2dial-light + ghz images for HTTP/2 and gRPC demos
 # ----------------------------------------------------------------------------
 echo "[7c/9] Building h2dial-light and ghz container images (one-time)"
+# `set -e` is on; tee+tail keeps the console quiet on success but `set -o pipefail`
+# guarantees a build failure still exits non-zero. On failure we cat the full
+# log so the user sees the actual error rather than only the last 3 lines.
+_build_image() {
+    local tag=$1 ctx=$2
+    shift 2
+    # Use `mktemp -d` rather than `mktemp -t TEMPLATE.log` — on macOS the -t
+    # form appends a random suffix AFTER the .log extension, leaving the
+    # extension mid-path. The internal use here is tolerant, but we keep
+    # the convention consistent with the demo scripts.
+    local logdir log
+    logdir=$(mktemp -d)
+    log="${logdir}/build-${tag//[\/:]/_}.log"
+    if docker build "$@" -t "${tag}" "${ctx}" >"${log}" 2>&1; then
+        tail -3 "${log}" | sed 's/^/      /'
+        rm -rf "${logdir}"
+    else
+        echo "      docker build failed for ${tag}; full log:" >&2
+        sed 's/^/      /' "${log}" >&2
+        rm -rf "${logdir}"
+        return 1
+    fi
+}
 if ! docker image inspect h2dial-light:local &>/dev/null; then
     echo "      Building h2dial-light:local..."
-    docker build -t h2dial-light:local "${REPRODUCER_ROOT}/tools/h2dial-light" 2>&1 | tail -3
+    _build_image h2dial-light:local "${REPRODUCER_ROOT}/tools/h2dial-light"
 fi
 if ! docker image inspect ghz:local &>/dev/null; then
     echo "      Building ghz:local..."
-    docker build --platform=linux/amd64 -t ghz:local "${REPRODUCER_ROOT}/tools/ghz" 2>&1 | tail -3
+    _build_image ghz:local "${REPRODUCER_ROOT}/tools/ghz" --platform=linux/amd64
 fi
 echo "      Importing images into k3d cluster..."
 k3d image import h2dial-light:local ghz:local --cluster "${CLUSTER_NAME}" 2>&1 | tail -3
@@ -258,13 +281,17 @@ spec:
 EOF
 kctl rollout status -n "${LOADGEN_NS}" deployment/h2dial-light --timeout=120s >/dev/null
 kctl rollout status -n "${LOADGEN_NS}" deployment/ghz --timeout=120s >/dev/null
-# Remove the old ghz/h2dial-light Deployments from apps namespace if they
-# exist (left over from an earlier deploy iteration before the loadgen-NS
-# fix). Safe no-op if absent.
-kctl delete deployment h2dial-light ghz -n "${APPS_NS}" --ignore-not-found 2>/dev/null >/dev/null || true
 
 # ----------------------------------------------------------------------------
 # [8/9] Deploy two ingress gateway tracks (prod + canary) with disjoint labels
+#
+# NOTE on container ports: we only declare status (15021), http (8080), and
+# https (8443) below. Envoy's Prometheus stats port (15090, named
+# `http-envoy-prom`) is added by Istio's gateway-template injection
+# (`inject.istio.io/templates: gateway` + sidecar.istio.io/inject=true).
+# The `monitoring.yaml` PodMonitor scrapes that injected port; if injection
+# is bypassed (e.g., raw Deployment without the annotations) the scrape
+# silently returns no data.
 # ----------------------------------------------------------------------------
 echo "[8/9] Deploying ingress gateway pair (prod track + canary track, ${GATEWAY_REPLICAS} replicas each)"
 for TRACK in "${TRACK_PROD}" "${TRACK_CANARY}"; do
@@ -411,13 +438,15 @@ kctl label configmap igw-hardening-dashboard -n "${MONITORING_NS}" \
 echo "[9/9] Verification"
 
 # PILOT_FILTER_GATEWAY_CLUSTER_CONFIG availability check (iteration-risk mitigation).
-# The flag has existed since Istio 1.16. Verify istiod knows about it by
-# checking for its presence in the env-var list at istiod's debug endpoint.
+# The flag has existed since Istio 1.16. We probe istiod's discovery binary
+# for the flag name; if the probe doesn't conclusively confirm it, just say
+# so and defer the real check to demo #07's actual toggle.
 ISTIOD_POD=$(kctl get pod -n "${SYSTEM_NS}" -l app=istiod -o jsonpath='{.items[0].metadata.name}')
-if kctl exec -n "${SYSTEM_NS}" "${ISTIOD_POD}" -c discovery -- /usr/local/bin/pilot-discovery 2>&1 | grep -q "PILOT_FILTER_GATEWAY_CLUSTER_CONFIG" \
-   || "${ISTIOCTL}" --context "${CONTEXT}" admin log --level=default 2>&1 | grep -qi "filter_gateway" \
-   || echo "(env-var probe deferred to demo #07; flag verified at use)"; then
-    :
+if kctl exec -n "${SYSTEM_NS}" "${ISTIOD_POD}" -c discovery -- /usr/local/bin/pilot-discovery 2>&1 \
+        | grep -q "PILOT_FILTER_GATEWAY_CLUSTER_CONFIG"; then
+    echo "      PILOT_FILTER_GATEWAY_CLUSTER_CONFIG flag known to istiod"
+else
+    echo "      (env-var probe inconclusive; flag will be verified at demo #07)"
 fi
 
 echo ""

@@ -25,8 +25,9 @@
 #
 # PRODUCT-IMPROVEMENT NOTE
 #   Solo doesn't ship a blessed VAP library for common gateway-hardening
-#   invariants. FR candidate in PLAN.md: ship a `gateway-hardening-vap-library`
-#   chart or docs page with vetted CEL rules.
+#   invariants. A `gateway-hardening-vap-library` chart or docs page with
+#   vetted CEL rules would let customers adopt these gates without authoring
+#   them from scratch.
 # ============================================================================
 set -uo pipefail
 

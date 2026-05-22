@@ -17,9 +17,9 @@ export CLUSTER_NAME="istio-igw-hardening"
 export CONTEXT="k3d-${CLUSTER_NAME}"
 
 # --- Versions ----------------------------------------------------------------
-# OSS Istio 1.27.8 matches the seed's last-validated version. Mechanism-
-# equivalent to SEfI 1.27.8-solo; install command differs (helm chart for
-# SEfI) but every demo in this playground behaves identically across both.
+# OSS Istio 1.27.8 is the version this playground was validated against.
+# Mechanism-equivalent to SEfI 1.27.8-solo — the install command differs
+# (helm chart for SEfI) but every demo behaves identically across both.
 export ISTIO_VERSION="1.27.8"
 # K8s 1.30+ required for ValidatingAdmissionPolicy CEL (demo #03).
 export K3S_IMAGE="rancher/k3s:v1.30.6-k3s1"
@@ -28,28 +28,29 @@ export K3S_IMAGE="rancher/k3s:v1.30.6-k3s1"
 export GATEWAY_API_VERSION="v1.2.1"
 
 # --- Port mappings (host -> cluster) ----------------------------------------
-# Unique high ports per the skill's port-conflict convention.
-export INGRESS_HTTP_PORT="18080"
-export INGRESS_HTTPS_PORT="18443"
+# Unique high ports to avoid clashing with anything else running on the host.
+# Both respect environment overrides for the case where the defaults collide
+# with another local cluster — e.g., INGRESS_HTTP_PORT=28080 ./deploy.sh.
+export INGRESS_HTTP_PORT="${INGRESS_HTTP_PORT:-18080}"
+export INGRESS_HTTPS_PORT="${INGRESS_HTTPS_PORT:-18443}"
 
 # --- Namespaces --------------------------------------------------------------
 export SYSTEM_NS="istio-system"
+# APPS_NS is the canonical name. By convention, orchestration shell code
+# (deploy.sh, helper arguments) uses `${APPS_NS}`, while demo YAML heredocs
+# hardcode the literal `apps` for readability — even in unquoted heredocs
+# that could interpolate, the literal keeps the YAML scannable. If you ever
+# rename the namespace, sweep both.
 export APPS_NS="apps"
 export APPS_NS_A="apps-ns-a"
 export APPS_NS_B="apps-ns-b"
 export DUMMY_NS="dummy-services"
 # loadgen is intentionally NOT ambient-labeled so ztunnel doesn't intercept
-# client traffic and wrap it in HBONE. Lab convention (CLAUDE.md): clients
-# that test L7 ingress behavior must reach the gateway without an ambient
-# transparent proxy in the path.
+# client traffic and wrap it in HBONE. Convention: clients that test L7
+# ingress behavior must reach the gateway without an ambient transparent
+# proxy in the path. See the README's "Iteration findings" section for the
+# full explanation.
 export LOADGEN_NS="loadgen"
-# grpc-backends is also NOT ambient-labeled. Our custom gateway pods
-# (track=prod/canary) don't have the standard istio-ingressgateway's HBONE
-# egress configuration, so they cannot forward plaintext gRPC to ambient
-# destinations through ztunnel. Putting gRPC backends in a non-ambient
-# namespace bypasses HBONE entirely. (Standard istio-ingressgateway can
-# reach ambient gRPC backends; our hand-rolled gateways cannot.)
-export GRPC_BACKENDS_NS="grpc-backends"
 # Monitoring stack (kube-prometheus-stack + Grafana + image-renderer sidecar).
 # Lives in its own namespace; PodMonitor discovers gateway pods via labels.
 export MONITORING_NS="monitoring"
@@ -79,8 +80,8 @@ export MANIFESTS_DIR="${REPRODUCER_ROOT}/manifests"
 export SNAPSHOTS_DIR="${REPRODUCER_ROOT}/snapshots"
 
 # --- kubectl wrapper --------------------------------------------------------
-# Always use --context to avoid hitting the wrong cluster when the SA has
-# multiple k3d clusters running. Per the skill's L001-style guidance.
+# Always use --context to avoid hitting the wrong cluster when multiple
+# k3d clusters are running on the same host.
 kctl() {
     kubectl --context "${CONTEXT}" "$@"
 }

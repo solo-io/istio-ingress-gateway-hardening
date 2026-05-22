@@ -28,9 +28,9 @@
 #
 # PRODUCT-IMPROVEMENT NOTE
 #   The dangling-reference case is exactly what istioctl analyze (Demo #02)
-#   catches; running both gates is the documented best practice. Whether
-#   Solo should ship a server-side analyze-on-apply variant is captured in
-#   the FR signals section of PLAN.md.
+#   catches; running both gates is the documented best practice. Open
+#   question for product: should Solo ship a server-side analyze-on-apply
+#   variant that closes this gap in the admission chain?
 # ============================================================================
 set -uo pipefail   # NOTE: no `-e` because we EXPECT certain commands to fail
 
@@ -47,8 +47,13 @@ demo_start "01" "validating-webhook" \
 # Step 1: apply a schema-invalid VirtualService (bad port protocol enum)
 # ---------------------------------------------------------------------------
 demo_step "Applying a VirtualService with a schema-invalid http weight (-1)"
-BAD_SCHEMA_YAML="$(mktemp -t demo01-bad-schema-XXXXXX.yaml)"
-trap 'rm -f "${BAD_SCHEMA_YAML}" "${DANGLING_REF_YAML:-}"' EXIT
+# macOS `mktemp -t TEMPLATE.yaml` puts the random suffix AFTER the .yaml
+# extension — see iteration finding in the README. Use mktemp -d + a known
+# filename instead so the .yaml extension stays at the end of the path.
+TMPDIR_DEMO01="$(mktemp -d)"
+BAD_SCHEMA_YAML="${TMPDIR_DEMO01}/bad-schema.yaml"
+DANGLING_REF_YAML="${TMPDIR_DEMO01}/dangling-ref.yaml"
+trap 'rm -rf "${TMPDIR_DEMO01}"' EXIT
 cat > "${BAD_SCHEMA_YAML}" <<'EOF'
 apiVersion: networking.istio.io/v1
 kind: VirtualService
@@ -82,7 +87,6 @@ fi
 #          (webhook should ACCEPT this — per-object validation only)
 # ---------------------------------------------------------------------------
 demo_step "Applying a VirtualService pointing at a non-existent destination Service"
-DANGLING_REF_YAML="$(mktemp -t demo01-dangling-ref-XXXXXX.yaml)"
 cat > "${DANGLING_REF_YAML}" <<'EOF'
 apiVersion: networking.istio.io/v1
 kind: VirtualService

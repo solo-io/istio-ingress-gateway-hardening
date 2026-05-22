@@ -26,8 +26,8 @@
 #
 # PRODUCT-IMPROVEMENT NOTE
 #   VirtualService.spec.mirror has `mirrorPercentage` for fractional mirroring.
-#   Gateway API RequestMirror filter (#08b) lacks this. Parity gap captured
-#   in PLAN.md FR signals.
+#   Gateway API RequestMirror filter (#08b) lacks this — the parity gap is
+#   real for teams that need to sub-sample mirrored traffic.
 # ============================================================================
 set -uo pipefail
 
@@ -93,25 +93,15 @@ spec:
       value: 100.0
 EOF
 kctl apply -f "${TMPDIR_DEMO}/manifests.yaml" >/dev/null
-sleep 3
+wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 2: port-forward to canary gateway Service
 # ---------------------------------------------------------------------------
 demo_step "Establishing port-forward to canary gateway Service"
 LOCAL_PORT=18681
-# NOTE: Call kubectl directly (not the kctl function) so $! captures the
-# actual kubectl PID, not a function-subshell PID. Otherwise trap cleanup
-# kills the wrapper but leaves the kubectl orphaned (port stays bound).
-kubectl --context "${CONTEXT}" port-forward -n istio-system \
-    "svc/${GATEWAY_APP_LABEL}-${TRACK_CANARY}" "${LOCAL_PORT}:80" >/dev/null 2>&1 &
-PF_PID=$!
-sleep 2
-if ! kill -0 "${PF_PID}" 2>/dev/null; then
-    demo_assert_fail "port-forward to canary gateway died (PID ${PF_PID})"
-    demo_end
-    exit $?
-fi
+PF_PID="$(start_port_forward "${SYSTEM_NS}" "svc/${GATEWAY_APP_LABEL}-${TRACK_CANARY}" "${LOCAL_PORT}:80")" \
+    || { demo_assert_fail "port-forward to canary gateway failed"; demo_end; exit $?; }
 demo_info "port-forward localhost:${LOCAL_PORT} -> ingress-gw-canary:80 (pid=${PF_PID})"
 
 # ---------------------------------------------------------------------------

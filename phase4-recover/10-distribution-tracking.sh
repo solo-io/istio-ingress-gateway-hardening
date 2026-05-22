@@ -121,7 +121,7 @@ spec:
           number: 8000
 EOF
 kctl apply -f "${TMPDIR_DEMO}/manifests.yaml" >/dev/null
-sleep 5  # let distribution-tracking populate
+wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 3: probe VS .status field (informational; see iteration finding)

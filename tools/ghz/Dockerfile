@@ -1,4 +1,4 @@
-# ghz: gRPC load tester for the ZD-8616 hardening playground.
+# ghz: gRPC load tester for the Istio Ingress Gateway Hardening Playground.
 # Independent build of the public OSS ghz tool from bojand/ghz releases.
 # Built locally and imported to k3d via `k3d image import` (no registry).
 #

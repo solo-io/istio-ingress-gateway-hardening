@@ -119,24 +119,18 @@ spec:
     - destination: {host: httpbin-v1.apps.svc.cluster.local, port: {number: 8000}}
 EOF
 kctl apply -f "${TMPDIR_DEMO}/setup.yaml" >/dev/null
-sleep 4
+# Both prod and canary tracks need to be SYNCED before the keep-alive test.
+wait_until_synced "ingress-gw-" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 2: separate port-forwards to prod and canary Services
 # ---------------------------------------------------------------------------
 PROD_PORT=18723
 CANARY_PORT=18724
-# Use `kubectl` directly (not the kctl function wrapper) so $! captures the
-# real kubectl PID. Backgrounding a bash function returns the subshell PID
-# instead, and the cleanup trap's `kill ${PF_PID}` would kill the wrapper
-# but leave the kubectl child orphaned, holding the port.
-kubectl --context "${CONTEXT}" port-forward -n istio-system "svc/${GATEWAY_APP_LABEL}-${TRACK_PROD}" "${PROD_PORT}:80" >/dev/null 2>&1 &
-PROD_PF_PID=$!
-kubectl --context "${CONTEXT}" port-forward -n istio-system "svc/${GATEWAY_APP_LABEL}-${TRACK_CANARY}" "${CANARY_PORT}:80" >/dev/null 2>&1 &
-CANARY_PF_PID=$!
-sleep 2
-kill -0 "${PROD_PF_PID}" 2>/dev/null && kill -0 "${CANARY_PF_PID}" 2>/dev/null \
-    || { demo_assert_fail "port-forwards failed to start"; demo_end; exit $?; }
+PROD_PF_PID="$(start_port_forward "${SYSTEM_NS}" "svc/${GATEWAY_APP_LABEL}-${TRACK_PROD}" "${PROD_PORT}:80")" \
+    || { demo_assert_fail "prod port-forward failed"; demo_end; exit $?; }
+CANARY_PF_PID="$(start_port_forward "${SYSTEM_NS}" "svc/${GATEWAY_APP_LABEL}-${TRACK_CANARY}" "${CANARY_PORT}:80")" \
+    || { demo_assert_fail "canary port-forward failed"; demo_end; exit $?; }
 demo_info "port-forwards: prod=:${PROD_PORT}  canary=:${CANARY_PORT}"
 
 V1_POD="$(kctl get pod -n apps -l app=httpbin,version=v1 -o jsonpath='{.items[0].metadata.name}')"
@@ -198,14 +192,10 @@ spec:
 EOF
 kctl apply -f "${TMPDIR_DEMO}/canary-v2.yaml" >/dev/null
 
-# Poll for SYNCED — both tracks should be SYNCED, but only canary actually got new config
+# Poll for SYNCED across BOTH tracks — only canary actually got new config,
+# but we want both rows present and non-STALE before continuing.
 WAIT_START=$(date +%s)
-for i in $(seq 1 20); do
-    PS="$("${ISTIOCTL}" --context "${CONTEXT}" proxy-status 2>/dev/null | grep "ingress-gw-")"
-    STALE=$(echo "${PS}" | grep -cE "STALE|NOT SENT" || true)
-    [[ "${STALE}" -eq 0 ]] && break
-    sleep 1
-done
+wait_until_synced "ingress-gw-" 20 || true
 demo_info "All gateway pods SYNCED in $(( $(date +%s) - WAIT_START ))s"
 
 # ---------------------------------------------------------------------------

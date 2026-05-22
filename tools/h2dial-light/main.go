@@ -13,6 +13,11 @@
 //
 // Output: one summary line per second of the form "t=Ns sent=N ok=N fail=N"
 // followed by a final line "FINAL sent=N ok=N fail=N elapsed=Ns".
+//
+// NOTE: -rate is open-loop — we sleep `1s/rate` between requests, ignoring
+// per-request latency. Actual rate ≈ 1/(latency + 1/rate). Fine for the
+// playground (demos only need ≥40 hits per 15s window). Don't repurpose
+// this binary as a benchmark tool without fixing the limiter first.
 
 package main
 

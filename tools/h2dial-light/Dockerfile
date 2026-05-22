@@ -1,5 +1,5 @@
-# h2dial-light: minimal HTTP/2 (h2c) client for the ZD-8616 hardening
-# playground. Built locally and imported to k3d via `k3d image import`.
+# h2dial-light: minimal HTTP/2 (h2c) client for the Istio Ingress Gateway
+# Hardening Playground. Built locally and imported to k3d via `k3d image import`.
 
 FROM golang:1.25-alpine AS build
 WORKDIR /src

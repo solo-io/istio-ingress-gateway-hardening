@@ -22,9 +22,9 @@
 #
 # SETUP
 #   - Gateway with HTTP listener on port 80; VS routing demo13c.example.com
-#     → grpcbin (primary) on port 9001 with appProtocol: grpc
+#     → grpcbin (primary) on port 9000 (plaintext gRPC; appProtocol: grpc)
 #   - ghz launched with --connections=1 against the canary gateway,
-#     sustained 30s, calling hello.HelloService.SayHello
+#     sustained 30s, calling grpcbin.GRPCBin/DummyUnary
 #   - Mid-run (at ~15s), switch the VS to route to grpcbin-v2
 #
 # PASS CRITERION
@@ -80,7 +80,7 @@ spec:
     - destination: {host: grpcbin.apps.svc.cluster.local, port: {number: 9000}}
 EOF
 kctl apply -f "${TMPDIR_DEMO}/setup.yaml" >/dev/null
-sleep 3
+wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 2: identify pods + baseline log counts
@@ -92,29 +92,12 @@ CANARY_GW_PODS=$(kctl get pod -n istio-system -l "app=${GATEWAY_APP_LABEL},${TRA
 demo_info "ghz pod:        ${GHZ_POD}"
 demo_info "canary gw pods: ${CANARY_GW_PODS}"
 
-# grpcbin doesn't log per-request like httpbin. Use Envoy upstream cluster
-# stats summed across all canary gateway pods. The stat name format:
-#   cluster.outbound|<port>||<svc>.<ns>.svc.cluster.local;.external.upstream_rq_completed
-# NOTE: '|' would be awk regex alternation — use index() for substring match.
-_upstream_rq() {
-    # Sum upstream_rq_completed across all canary gateway pods AND across
-    # Envoy's external+internal stat buckets (mirror requests land in
-    # `.internal.`, not `.external.`).
-    local total=0 v
-    for POD in ${CANARY_GW_PODS}; do
-        for BUCKET in external internal; do
-            v=$(kctl exec -n istio-system "${POD}" -c istio-proxy -- \
-                pilot-agent request GET stats 2>/dev/null \
-                | awk -F': ' -v key="cluster.outbound|9000||$1.apps.svc.cluster.local;.${BUCKET}.upstream_rq_completed" \
-                    'index($0, key) > 0 {print $2; exit}' \
-                | tr -d ' ')
-            total=$((total + ${v:-0}))
-        done
-    done
-    echo "${total}"
-}
-T0_PRIMARY=$(_upstream_rq grpcbin)
-T0_V2=$(_upstream_rq grpcbin-v2)
+# grpcbin doesn't log per-request like httpbin. Use envoy_upstream_rq (from
+# lib/pass-fail.sh) which sums upstream_rq_completed across all canary gateway
+# pods AND both Envoy stat buckets (.external + .internal).
+_rq() { envoy_upstream_rq "$1" "${APPS_NS}" 9000 "${SYSTEM_NS}" "${CANARY_GW_PODS}"; }
+T0_PRIMARY=$(_rq grpcbin)
+T0_V2=$(_rq grpcbin-v2)
 T0_PRIMARY=${T0_PRIMARY:-0}
 T0_V2=${T0_V2:-0}
 
@@ -143,8 +126,8 @@ GHZ_PID=$!
 # Wait until ~15s
 sleep 15
 
-T15_PRIMARY=$(_upstream_rq grpcbin)
-T15_V2=$(_upstream_rq grpcbin-v2)
+T15_PRIMARY=$(_rq grpcbin)
+T15_V2=$(_rq grpcbin-v2)
 T15_PRIMARY=${T15_PRIMARY:-0}
 T15_V2=${T15_V2:-0}
 MID_PRIMARY_DELTA=$((T15_PRIMARY - T0_PRIMARY))
@@ -176,8 +159,8 @@ wait "${GHZ_PID}" 2>/dev/null || true
 GHZ_PID=""
 
 sleep 1
-T30_PRIMARY=$(_upstream_rq grpcbin)
-T30_V2=$(_upstream_rq grpcbin-v2)
+T30_PRIMARY=$(_rq grpcbin)
+T30_V2=$(_rq grpcbin-v2)
 T30_PRIMARY=${T30_PRIMARY:-0}
 T30_V2=${T30_V2:-0}
 SECOND_HALF_PRIMARY_DELTA=$((T30_PRIMARY - T15_PRIMARY))
