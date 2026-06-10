@@ -53,6 +53,13 @@ cleanup_demo() {
         echo "  • Reverting istiod env var PILOT_FILTER_GATEWAY_CLUSTER_CONFIG..."
         kctl set env deployment/istiod -n istio-system PILOT_FILTER_GATEWAY_CLUSTER_CONFIG- 2>/dev/null
         kctl rollout status deployment/istiod -n istio-system --timeout=120s 2>/dev/null
+        # Gateway pods need to reconnect to the freshly-restarted istiod and
+        # receive a fresh CDS push. proxy-status reports SYNCED before that
+        # reconnect actually completes, so subsequent demos that immediately
+        # apply a new Gateway/VS would otherwise race the resync and see
+        # routes that aren't yet wired up. 10s is the empirical settle time
+        # on this playground; shorter values produce flakes downstream.
+        sleep 10
     fi
 }
 trap cleanup_demo EXIT
@@ -125,11 +132,25 @@ wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 4: capture post-toggle cluster count (re-resolve pod in case it
-# was recreated for any reason)
+# was recreated for any reason).
+#
+# Subtle: `kubectl rollout status` and `wait_until_synced` both return
+# before the gateway pod has actually received the new filtered CDS push.
+# proxy-status reports SYNCED based on the pre-reconnect state. Poll the
+# cluster count until it drops (the expected effect of the flag) or 60s
+# elapses; if it never drops, fall through and let the assertion fail
+# with the captured value so the failure mode is visible.
 # ---------------------------------------------------------------------------
-demo_step "Capturing POST-toggle cluster count"
-CANARY_POD="$(kctl get pod -n istio-system -l "${CANARY_POD_LABELS}" -o jsonpath='{.items[0].metadata.name}')"
-POST_COUNT="$("${ISTIOCTL}" --context "${CONTEXT}" pc clusters "${CANARY_POD}.istio-system" 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')"
+demo_step "Capturing POST-toggle cluster count (polling for xDS resync)"
+POST_COUNT="${PRE_COUNT}"
+for _ in $(seq 1 60); do
+    CANARY_POD="$(kctl get pod -n istio-system -l "${CANARY_POD_LABELS}" -o jsonpath='{.items[0].metadata.name}')"
+    POST_COUNT="$("${ISTIOCTL}" --context "${CONTEXT}" pc clusters "${CANARY_POD}.istio-system" 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')"
+    if [[ "${POST_COUNT}" -lt "${PRE_COUNT}" ]]; then
+        break
+    fi
+    sleep 1
+done
 demo_info "Post-toggle cluster count: ${POST_COUNT}  (pod: ${CANARY_POD})"
 
 # ---------------------------------------------------------------------------

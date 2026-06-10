@@ -598,6 +598,7 @@ Running individual demos:
 - `go` (for building `h2dial-light` — only used at deploy time)
 - `python3` (used by demo #13 for an inline keep-alive client; ships on macOS, may need installing on minimal Linux)
 - `jq`
+- `timeout(1)` — built-in on Linux as part of GNU coreutils. On macOS, install via `brew install coreutils` (provides `gtimeout`, which `run-all.sh` picks up automatically). Without it, demos run unbounded — a stuck demo wedges the whole sweep.
 - `d2` (optional, only needed if you edit `docs/topology.d2` and want to re-render the SVG; the committed `docs/topology.svg` is what the README embeds)
 
 **Apple Silicon note:** the Grafana image-renderer sidecar is

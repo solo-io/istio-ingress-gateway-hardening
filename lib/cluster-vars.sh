@@ -91,8 +91,19 @@ helm_cmd() {
 export -f helm_cmd
 
 # --- Sanity check function (callable by individual demo scripts) -------------
+# Retry the context probe twice on transient failure — `kubectl config
+# get-contexts` is normally instant, but during a busy `run-all.sh` we've
+# seen it occasionally return empty mid-sweep, causing a spurious demo
+# fail. The cluster-reachability check below is the real authority.
 ensure_cluster_up() {
-    if ! kubectl config get-contexts -o name 2>/dev/null | grep -qx "${CONTEXT}"; then
+    local found=false
+    for _ in 1 2 3; do
+        if kubectl config get-contexts -o name 2>/dev/null | grep -qx "${CONTEXT}"; then
+            found=true; break
+        fi
+        sleep 1
+    done
+    if [[ "${found}" != "true" ]]; then
         echo "ERROR: Context '${CONTEXT}' not found. Run ./deploy.sh first." >&2
         return 1
     fi

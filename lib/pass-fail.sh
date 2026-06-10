@@ -130,21 +130,31 @@ export -f start_port_forward
 # wait_until_synced [LABEL_SELECTOR] [TIMEOUT_SECS]
 #
 # Polls `istioctl proxy-status` until every matching gateway pod reports
-# SYNCED (no STALE / NOT SENT in any xDS-type column). This is the
-# documented replacement for `istioctl experimental wait --for=distribution`
-# which was removed in Istio 1.27.
+# SYNCED (no STALE / NOT SENT in any xDS-type column) for two consecutive
+# ticks. This is the documented replacement for `istioctl experimental
+# wait --for=distribution` which was removed in Istio 1.27.
+#
+# Why two consecutive SYNCED ticks rather than one: istiod batches pushes
+# behind a short (~100ms) debounce. Immediately after a `kubectl apply`,
+# istiod has queued a push but hasn't sent it yet — proxy-status briefly
+# reports SYNCED against the PREVIOUS state. One tick later the push has
+# fired and the proxy is mid-sync (STALE); one tick after that it's
+# genuinely SYNCED to the new state. Requiring two consecutive clean
+# snapshots skips the false-SYNCED window. The final settle sleep covers
+# the tail of envoy applying the config to its router table.
 #
 # Defaults:
 #   LABEL_SELECTOR — "ingress-gw-${TRACK_CANARY}" substring (matches the
 #                    proxy-status row's pod-name column)
 #   TIMEOUT_SECS   — 30
 #
-# Returns 0 on SYNCED, 1 on timeout.
+# Returns 0 on stable SYNCED, 1 on timeout.
 # ----------------------------------------------------------------------------
 wait_until_synced() {
     local match=${1:-"ingress-gw-${TRACK_CANARY}"}
     local timeout=${2:-30}
     local start=$(date +%s)
+    local consec_synced=0
     while [[ $(($(date +%s) - start)) -lt ${timeout} ]]; do
         local ps_output
         ps_output="$("${ISTIOCTL}" --context "${CONTEXT}" proxy-status 2>/dev/null | grep "${match}" || true)"
@@ -152,6 +162,7 @@ wait_until_synced() {
         # this tick — counting "echo ''" as 1 line via wc would otherwise
         # report SYNCED with zero pods.
         if [[ -z "${ps_output}" ]]; then
+            consec_synced=0
             sleep 1
             continue
         fi
@@ -159,13 +170,58 @@ wait_until_synced() {
         stale_count="$(echo "${ps_output}" | grep -cE "STALE|NOT SENT" || true)"
         pod_count="$(echo "${ps_output}" | grep -c .)"
         if [[ "${stale_count}" -eq 0 ]] && [[ "${pod_count}" -ge 1 ]]; then
-            return 0
+            consec_synced=$((consec_synced + 1))
+            if [[ "${consec_synced}" -ge 2 ]]; then
+                # Brief tail for Envoy to apply the pushed config to its
+                # router. Without this, a follow-on `pc routes` call can
+                # still miss the just-pushed route.
+                sleep 1
+                return 0
+            fi
+        else
+            consec_synced=0
         fi
         sleep 1
     done
     return 1
 }
 export -f wait_until_synced
+
+# ----------------------------------------------------------------------------
+# wait_pc_match POD_ID KIND PATTERN [TIMEOUT_SECS]
+#
+# Polls `istioctl proxy-config <KIND> <POD_ID>` until a grep -i pattern
+# matches the output, or TIMEOUT_SECS elapses.
+#
+# Stronger signal than `wait_until_synced` when the demo is verifying a
+# specific new resource (route, cluster, listener) it just applied. The
+# `proxy-status` SYNCED check can return true while istiod is still in
+# its push-debounce window for a freshly applied resource — the gateway
+# is SYNCED to the *previous* state. Polling the actual data dimension
+# you care about avoids that race entirely.
+#
+# Usage:
+#   wait_pc_match "${CANARY_POD}.istio-system" routes "demo05a-canary" 30 \
+#     || demo_assert_fail "route never reached canary pod"
+#
+# KIND is one of: routes, clusters, listeners, endpoints, bootstrap, secret.
+#
+# Returns 0 when match found, 1 on timeout.
+# ----------------------------------------------------------------------------
+wait_pc_match() {
+    local pod_id=$1 kind=$2 pattern=$3
+    local timeout=${4:-30}
+    local start=$(date +%s)
+    while [[ $(($(date +%s) - start)) -lt ${timeout} ]]; do
+        if "${ISTIOCTL}" --context "${CONTEXT}" pc "${kind}" "${pod_id}" 2>/dev/null \
+                | grep -qi "${pattern}"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+export -f wait_pc_match
 
 # ----------------------------------------------------------------------------
 # envoy_upstream_rq SERVICE_NAME SERVICE_NS PORT GW_POD_NS GW_PODS_STR
