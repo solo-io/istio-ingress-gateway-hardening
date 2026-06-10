@@ -47,11 +47,11 @@ When you change an Istio `Gateway`, `VirtualService`, or
 Istio's control plane (`istiod`) processes the CRD change and pushes the
 resulting configuration to every Envoy proxy whose labels match the
 resource's selector. There is no "rolling configuration update." There
-is no health check on the configuration itself. A malformed routing
-rule, a TLS setting with a missing credential reference, a destination
-pointed at a Service that doesn't exist — istiod accepts it (mostly;
-we'll qualify that shortly), generates the corresponding xDS payload,
-and pushes it to every gateway pod at once.
+is no health check on the configuration itself. istiod accepts almost
+anything that's textually well-formed (a malformed routing rule, a TLS
+setting with a missing credential reference, a destination pointed at
+a nonexistent Service — we'll qualify the "almost" shortly), generates
+the xDS payload, and pushes it to every gateway pod at once.
 
 If you've staged your gateway pod deployment so that the new image rolls
 out at the same time as the new CRD configuration, two distinct things
@@ -99,8 +99,7 @@ of failure it was meant to prevent.
 ### Phase 1 — Prevent
 
 The cheapest configuration change to fix is the one that never lands
-in the cluster. Three gates compose, each catching a different class
-of problem.
+in the cluster.
 
 **The Istio validating admission webhook.** When you install Istio, it
 registers a `ValidatingWebhookConfiguration` that routes `CREATE` /
@@ -309,9 +308,9 @@ against real-shaped requests before promoting it to production.
 
 **Traffic mirroring (shadow traffic).** Route 100% of traffic to the
 production backend and **mirror** the same requests to a candidate
-backend. The mirror is fire-and-forget — the client sees only the
-production response; the candidate's response is discarded. Errors and
-crashes at the candidate do not affect the client.
+backend. The mirror is fire-and-forget: the client sees only the
+production response, and the candidate's response is discarded.
+Errors and crashes at the candidate do not affect the client.
 
 This catches the class of issue where the request parses fine but the
 backend handler crashes on a specific shape of real production payload
@@ -355,7 +354,8 @@ shadow-side observation. The selector can be any property of the
 request: a header set by a feature-flag system, a session-affinity
 cookie, an authenticated user attribute extracted by an EnvoyFilter.
 Pair it with synthetic test traffic that injects the header from a CI
-pipeline and you get full-fidelity validation against production.
+pipeline, and you can validate the candidate against real production
+behavior.
 
 Both APIs support this identically. The more-specific match wins; the
 unmatched default rule catches everything else.
@@ -463,10 +463,10 @@ property: **existing connections see new routes on their next request
 after an xDS push to their gateway pod**.
 
 This runs counter to a common intuition. Operators sometimes assume
-that an in-flight connection pins the routing decision at
+an in-flight connection pins the routing decision at
 connection-establishment time, and that long-lived connections are
-therefore insulated from mid-flight configuration changes. **That
-intuition is wrong for HTTP-family protocols at the L7 ingress.**
+insulated from mid-flight configuration changes. That intuition is
+wrong for HTTP-family protocols at the L7 ingress.
 
 The intuition is right at the L4 layer in one narrow sense: an NLB
 connection to gateway pod A stays on pod A for the connection's
@@ -485,10 +485,10 @@ you connection-grain control:
 - A client whose connection terminated on a **canary**-track pod sees
   the new canary VS on its next request.
 
-This composition is the load-bearing protection for safe in-place
-CRD rollouts behind an L4 load balancer. It doesn't come from
-connection state; it comes from **track isolation combined with the
-NLB's connection stickiness**.
+This composition is the main protection for safe in-place CRD
+rollouts behind an L4 load balancer. It doesn't come from connection
+state; it comes from track isolation combined with the NLB's
+connection stickiness.
 
 > **Demos:**
 > - `phase5-resilience/13-xds-push-track-isolation.sh` — HTTP/1.1 keep-alive
