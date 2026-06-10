@@ -1,6 +1,6 @@
 module h2dial-light
 
-go 1.23.0
+go 1.25.0
 
 require golang.org/x/net v0.40.0
 

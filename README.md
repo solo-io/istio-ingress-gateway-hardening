@@ -64,10 +64,10 @@ happen in parallel:
    simultaneously. Atomic from the cluster's perspective. Not
    health-check-gated. Not reversible without another CRD apply.
 
-The blast radius of a bad configuration change is therefore "every
-gateway pod that matches the resource's selector, as soon as istiod
-processes the apply." For a typical single-tier ingress deployment, that
-means "every gateway pod, in seconds, in production." For teams
+A bad configuration change therefore reaches every gateway pod whose
+labels match the resource's selector, in the time it takes istiod to
+process the apply. For a typical single-tier ingress deployment, that
+means every gateway pod, in seconds, in production. For teams
 operating behind a load balancer that distributes by connection rather
 than by request (any L4 LB — AWS NLB, GCP TCP load balancer, on-prem F5),
 this surface manifests as: every client whose connection happens to
@@ -324,9 +324,10 @@ Mechanism support across APIs:
 | Classic Istio API | `VirtualService.spec.http[*].mirror` + `mirrorPercentage` | Yes (0.0–100.0) |
 | Gateway API | `HTTPRoute` / `GRPCRoute` `RequestMirror` filter | **No (100%-only)** |
 
-The classic Istio API's percentage knob earns its keep: you can mirror
-1% of production traffic to validate a new backend without doubling the
-load on it. The Gateway API filter is 100%-only, so sub-sampling with
+The classic Istio API's percentage knob matters in practice: you can
+mirror 1% of production traffic to validate a new backend without
+doubling its load. The Gateway API filter is 100%-only, so sub-sampling
+with
 Gateway API requires an `ExtensionRef` filter or routing through a
 fractional-sampling proxy.
 
@@ -348,9 +349,9 @@ traffic, a header-matched canary routes a fraction of real traffic to
 the candidate based on an HTTP header. Requests carrying `x-canary:
 true` go to the candidate; everyone else stays on production.
 
-This is the right tool when you want to exercise the candidate with
-**real end-to-end behavior** — response path included — not just the
-shadow-side observation. The selector can be any property of the
+Use this when you want to exercise the candidate with real end-to-end
+behavior, response path included, not just the shadow-side observation.
+The selector can be any property of the
 request: a header set by a feature-flag system, a session-affinity
 cookie, an authenticated user attribute extracted by an EnvoyFilter.
 Pair it with synthetic test traffic that injects the header from a CI
@@ -515,9 +516,9 @@ The TCP row is the interesting one. For Layer-4 routes via
 the routing decision is taken at connection-establishment time and
 locked in for the connection's lifetime. The "existing connections see
 new routes on next request" finding from Phase 5 **does not** apply.
-This cuts both ways: TCP services get connection-level isolation from
-config changes for free, but you also can't shift a TCP route without
-forcing client reconnects.
+This cuts both ways: TCP services inherit connection-level isolation
+from config changes, but you can't shift a TCP route without forcing
+client reconnects.
 
 ---
 
@@ -533,7 +534,7 @@ workload-binding versus `allowedRoutes.namespaces` per-listener),
 `exportTo` (Istio-only), mirror percentage support (Istio-only) — both
 demos are present.
 
-A few observations from running them side by side:
+Observations from running both:
 
 - **Routing primitives are mostly equivalent.** Both APIs cleanly
   express "route by host," "route by path prefix," "route by header
@@ -829,15 +830,14 @@ the next run. Delete it manually if you don't want it.
 |------|------|
 | `LICENSE` | Apache License 2.0 |
 | `lib/cluster-vars.sh` | Single source of truth for cluster name, versions, namespaces, paths |
-| `lib/pass-fail.sh` | PASS/FAIL output helpers plus shared utilities (`start_port_forward`, `wait_until_synced`, `envoy_upstream_rq`) |
-| `lib/grafana-snapshot.sh` | Snapshot-helper stub (preserved for future revival; not called by demos) |
+| `lib/pass-fail.sh` | PASS/FAIL output helpers plus shared utilities (`start_port_forward`, `wait_until_synced`, `wait_pc_match`, `envoy_upstream_rq`) |
 | `tools/h2dial-light/` | Vendored Go HTTP/2 (h2c) client (idle-mode pod for #13b) |
 | `tools/ghz/` | Dockerfile for gRPC load tester (idle-mode pod for #08c, #08d, #13c) |
 | `manifests/grpcbin.yaml` | gRPC backends (primary, shadow, v2) |
 | `manifests/monitoring.yaml` | PodMonitors for gateway pods + istiod |
 | `dashboard/igw-hardening.json` | 4-panel Grafana dashboard (auto-loaded by deploy.sh) |
 | `docs/topology.d2` / `topology.svg` | Source + rendered topology diagram embedded in this README |
-| `phase{1,2,3,4,5}*/` | Per-phase demo scripts |
+| `phase{1,2,3,4,5}-*/` | Per-phase demo scripts |
 | `deploy.sh` | One-shot environment bring-up |
 | `cleanup.sh` | k3d cluster teardown |
 | `run-all.sh` | Orchestrator: runs every demo, batches istiod toggles, prints summary |

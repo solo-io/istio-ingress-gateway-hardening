@@ -129,13 +129,9 @@ spec:
 EOF
 kctl apply -f "${TMPDIR_DEMO}/route.yaml" >/dev/null
 
-# Wait for istiod to push to the auto-provisioned gateway pods (both prod + canary).
-wait_until_synced "demo05b-" 30 || true
-
-# ---------------------------------------------------------------------------
-# Step 4: inspect routes on each Gateway-API-provisioned pod
-# ---------------------------------------------------------------------------
-demo_step "Inspecting 'istioctl pc routes' on the two auto-provisioned gateway pods"
+# Resolve the two auto-provisioned gateway pods first, then poll for the
+# new route on the canary side. proxy-status SYNCED isn't strong enough on
+# its own here: istiod's push-debounce window can show SYNCED-to-old-state.
 PROD_POD="$(kctl get pod -n "${APPS_NS}" -l "gateway.networking.k8s.io/gateway-name=demo05b-prod-gw" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
 CANARY_POD="$(kctl get pod -n "${APPS_NS}" -l "gateway.networking.k8s.io/gateway-name=demo05b-canary-gw" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
 if [[ -z "${PROD_POD}" ]] || [[ -z "${CANARY_POD}" ]]; then
@@ -143,6 +139,12 @@ if [[ -z "${PROD_POD}" ]] || [[ -z "${CANARY_POD}" ]]; then
     demo_end
     exit $?
 fi
+wait_pc_match "${CANARY_POD}.${APPS_NS}" routes "demo05b-canary.example.com" 30 || true
+
+# ---------------------------------------------------------------------------
+# Step 4: inspect routes on each Gateway-API-provisioned pod
+# ---------------------------------------------------------------------------
+demo_step "Inspecting 'istioctl pc routes' on the two auto-provisioned gateway pods"
 demo_info "prod-gateway pod:   ${PROD_POD}"
 demo_info "canary-gateway pod: ${CANARY_POD}"
 

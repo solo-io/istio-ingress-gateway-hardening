@@ -84,7 +84,10 @@ spec:
           number: 8000
 EOF
 kctl apply -f "${TMPDIR_DEMO}/manifests.yaml" >/dev/null
-wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
+# Poll the canary gateway pod's route table directly for the new host
+# (stronger than `wait_until_synced` against the push-debounce window).
+CANARY_GW_POD="$(kctl get pod -n "${SYSTEM_NS}" -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY}" -o jsonpath='{.items[0].metadata.name}')"
+wait_pc_match "${CANARY_GW_POD}.${SYSTEM_NS}" routes "demo09a.example.com" 30 || true
 
 LOCAL_PORT=18691
 PF_PID="$(start_port_forward "${SYSTEM_NS}" "svc/${GATEWAY_APP_LABEL}-${TRACK_CANARY}" "${LOCAL_PORT}:80")" \

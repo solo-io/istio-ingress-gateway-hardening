@@ -56,7 +56,6 @@ export GRAFANA_ADMIN_PASSWORD="igw-hardening"
 # Grafana image-renderer sidecar (platform=linux/amd64 only; runs under
 # Rosetta on Apple Silicon hosts).
 export RENDERER_IMAGE="grafana/grafana-image-renderer:v5.8.3"
-# SNAPSHOTS_DIR is set further down after REPRODUCER_ROOT is computed.
 
 # --- Workload labels ---------------------------------------------------------
 # Gateway pods distinguish prod vs canary by label for demo #05 selector pair.
@@ -74,7 +73,6 @@ REPRODUCER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export REPRODUCER_ROOT
 export ISTIOCTL="${REPRODUCER_ROOT}/istioctl"
 export MANIFESTS_DIR="${REPRODUCER_ROOT}/manifests"
-export SNAPSHOTS_DIR="${REPRODUCER_ROOT}/snapshots"
 
 # --- kubectl wrapper --------------------------------------------------------
 # Always use --context to avoid hitting the wrong cluster when multiple

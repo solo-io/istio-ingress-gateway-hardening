@@ -38,13 +38,16 @@ else
     _GREEN='' _RED='' _YELLOW='' _BLUE='' _BOLD='' _RESET=''
 fi
 
-# Demo-scoped state
-_DEMO_ID=""
-_DEMO_NAME=""
-_DEMO_HYPOTHESIS=""
-_DEMO_PASS_COUNT=0
-_DEMO_FAIL_COUNT=0
-_DEMO_START_TS=0
+# Demo-scoped state. Exported so child bash shells (e.g. `bash -c '...'`
+# inside a demo step) see the same counters as the parent — without this,
+# the exported demo_* functions would update private counters in the child
+# and demo_end would miss them.
+export _DEMO_ID=""
+export _DEMO_NAME=""
+export _DEMO_HYPOTHESIS=""
+export _DEMO_PASS_COUNT=0
+export _DEMO_FAIL_COUNT=0
+export _DEMO_START_TS=0
 
 demo_start() {
     _DEMO_ID="$1"
@@ -212,9 +215,12 @@ wait_pc_match() {
     local pod_id=$1 kind=$2 pattern=$3
     local timeout=${4:-30}
     local start=$(date +%s)
+    # -F (fixed-string) avoids surprises when the pattern contains regex
+    # metacharacters — hostnames in particular have literal `.` chars that
+    # would otherwise match any character.
     while [[ $(($(date +%s) - start)) -lt ${timeout} ]]; do
         if "${ISTIOCTL}" --context "${CONTEXT}" pc "${kind}" "${pod_id}" 2>/dev/null \
-                | grep -qi "${pattern}"; then
+                | grep -qiF "${pattern}"; then
             return 0
         fi
         sleep 1

@@ -109,13 +109,15 @@ for i in $(seq 1 60); do
     sleep 1
 done
 [[ "${READY:-0}" -lt 1 ]] && { demo_assert_fail "Istio did not provision backing pod in 60s"; demo_end; exit $?; }
-wait_until_synced "demo08d-gw-istio" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 2: identify pods and capture baseline upstream_rq stats
 # ---------------------------------------------------------------------------
 GHZ_POD="$(kctl get pod -n "${LOADGEN_NS}" -l app=ghz -o jsonpath='{.items[0].metadata.name}')"
-GW_PODS=$(kctl get pod -n apps -l "gateway.networking.k8s.io/gateway-name=demo08d-gw" -o jsonpath='{.items[*].metadata.name}')
+GW_PODS=$(kctl get pod -n "${APPS_NS}" -l "gateway.networking.k8s.io/gateway-name=demo08d-gw" -o jsonpath='{.items[*].metadata.name}')
+# Poll the auto-provisioned pod's route table for the new host before sending traffic.
+FIRST_GW="${GW_PODS%% *}"
+wait_pc_match "${FIRST_GW}.${APPS_NS}" routes "demo08d.example.com" 30 || true
 demo_info "ghz pod:    ${GHZ_POD}"
 demo_info "gwapi pods: ${GW_PODS}"
 
@@ -135,12 +137,14 @@ demo_step "Sending 30 gRPC calls via ghz through demo08d-gw"
 GHZ_OUT="${TMPDIR_DEMO}/ghz.out"
 kctl exec -n "${LOADGEN_NS}" "${GHZ_POD}" -- /usr/local/bin/ghz \
     --insecure --connections=1 --concurrency=2 --total=30 \
+    --format=json \
     --authority=demo08d.example.com \
     --call=grpcbin.GRPCBin/DummyUnary --data='{}' \
-    "demo08d-gw-istio.apps.svc.cluster.local:80" > "${GHZ_OUT}" 2>&1
+    "demo08d-gw-istio.${APPS_NS}.svc.cluster.local:80" > "${GHZ_OUT}" 2>&1
 
 demo_info "ghz summary:"
-grep -A 3 "Status code distribution" "${GHZ_OUT}" | sed 's/^/        /'
+jq -r '"        count=\(.count) ok=\(.statusCodeDistribution.OK // 0) avg=\(.average / 1000000 | floor)ms rps=\(.rps | floor)"' "${GHZ_OUT}" 2>/dev/null \
+    || echo "        (ghz json parse failed; raw output: $(head -c 200 "${GHZ_OUT}"))"
 sleep 3
 
 POST_PRIMARY=$(_rq grpcbin); POST_PRIMARY=${POST_PRIMARY:-0}
@@ -152,7 +156,7 @@ demo_info "Post-load deltas: primary=${PRIMARY_DELTA}, shadow=${SHADOW_DELTA}"
 # ---------------------------------------------------------------------------
 # Assertions (same shape as #08c)
 # ---------------------------------------------------------------------------
-OK_COUNT=$(awk '/^  \[OK\]/ {print $2; exit}' "${GHZ_OUT}")
+OK_COUNT=$(jq -r '.statusCodeDistribution.OK // 0' "${GHZ_OUT}" 2>/dev/null)
 OK_COUNT=${OK_COUNT:-0}
 if [[ "${OK_COUNT}" -eq 30 ]]; then
     demo_assert_pass "All 30 ghz responses were OK"

@@ -100,8 +100,10 @@ for i in $(seq 1 60); do
 done
 [[ "${READY:-0}" -lt 1 ]] && { demo_assert_fail "Istio did not provision backing pod in 60s"; demo_end; exit $?; }
 
-# Allow istiod to push xDS to the new gateway pod.
-wait_until_synced "demo08b-gw-istio" 30 || true
+# Poll the auto-provisioned pod's route table directly for the new host
+# (stronger than `wait_until_synced` against the push-debounce window).
+GW_POD="$(kctl get pod -n "${APPS_NS}" -l gateway.networking.k8s.io/gateway-name=demo08b-gw -o jsonpath='{.items[0].metadata.name}')"
+wait_pc_match "${GW_POD}.${APPS_NS}" routes "demo08b.example.com" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 2: port-forward to the auto-provisioned gateway Service
