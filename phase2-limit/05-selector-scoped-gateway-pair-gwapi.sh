@@ -136,13 +136,18 @@ wait_until_synced "demo05b-" 30 || true
 # Step 4: inspect routes on each Gateway-API-provisioned pod
 # ---------------------------------------------------------------------------
 demo_step "Inspecting 'istioctl pc routes' on the two auto-provisioned gateway pods"
-PROD_POD="$(kctl get pod -n apps -l "gateway.networking.k8s.io/gateway-name=demo05b-prod-gw" -o jsonpath='{.items[0].metadata.name}')"
-CANARY_POD="$(kctl get pod -n apps -l "gateway.networking.k8s.io/gateway-name=demo05b-canary-gw" -o jsonpath='{.items[0].metadata.name}')"
+PROD_POD="$(kctl get pod -n "${APPS_NS}" -l "gateway.networking.k8s.io/gateway-name=demo05b-prod-gw" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+CANARY_POD="$(kctl get pod -n "${APPS_NS}" -l "gateway.networking.k8s.io/gateway-name=demo05b-canary-gw" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+if [[ -z "${PROD_POD}" ]] || [[ -z "${CANARY_POD}" ]]; then
+    demo_assert_fail "Gateway-API-provisioned pods not found (prod='${PROD_POD}', canary='${CANARY_POD}')"
+    demo_end
+    exit $?
+fi
 demo_info "prod-gateway pod:   ${PROD_POD}"
 demo_info "canary-gateway pod: ${CANARY_POD}"
 
-PROD_ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${PROD_POD}.apps" 2>/dev/null || true)"
-CANARY_ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${CANARY_POD}.apps" 2>/dev/null || true)"
+PROD_ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${PROD_POD}.${APPS_NS}" 2>/dev/null || true)"
+CANARY_ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${CANARY_POD}.${APPS_NS}" 2>/dev/null || true)"
 
 demo_info "prod-gateway pod routes (rows with 'demo05b'):"
 echo "${PROD_ROUTES}" | grep -i "demo05b" | sed 's/^/        /' || echo "        (none)"

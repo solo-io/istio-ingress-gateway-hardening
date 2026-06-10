@@ -45,7 +45,15 @@ cleanup_demo() {
 }
 trap cleanup_demo EXIT
 
-CANARY_POD="$(kctl get pod -n istio-system -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY}" -o jsonpath='{.items[0].metadata.name}')"
+# Resolve the canary gateway pod we'll inspect with `istioctl pc routes`.
+# Do this after ensure_cluster_up so a partially-deployed cluster produces a
+# clean failure here instead of cascading 'empty pod name' errors below.
+CANARY_POD="$(kctl get pod -n "${SYSTEM_NS}" -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+if [[ -z "${CANARY_POD}" ]]; then
+    demo_assert_fail "No canary gateway pods found (label app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY} in ${SYSTEM_NS}). Did deploy.sh complete?"
+    demo_end
+    exit $?
+fi
 demo_info "Inspecting canary pod: ${CANARY_POD}"
 
 # ---------------------------------------------------------------------------

@@ -111,6 +111,7 @@ kctl label namespace "${LOADGEN_NS}" istio.io/dataplane-mode- --overwrite 2>/dev
 # ----------------------------------------------------------------------------
 echo "[6/9] Seeding ${DUMMY_NS} with 5 dummy Services (demo #07 baseline)"
 kctl create namespace "${DUMMY_NS}" --dry-run=client -o yaml | kctl apply -f - >/dev/null
+kctl label namespace "${DUMMY_NS}" istio.io/dataplane-mode=ambient --overwrite >/dev/null
 for i in 1 2 3 4 5; do
     kctl apply -n "${DUMMY_NS}" -f - >/dev/null <<EOF
 apiVersion: v1

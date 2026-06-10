@@ -4,15 +4,12 @@
 # namespace, port, and path configuration.
 #
 # Every script in this playground sources this file. To change the cluster
-# name, Istio version, or port mappings, edit here. CLUSTER_TYPE is the only
-# variable that drives cluster-type-specific bring-up (k3d vs future eks);
-# everything else stays cluster-agnostic.
+# name, Istio version, or port mappings, edit here.
 #
 # Usage: source lib/cluster-vars.sh  (relative to test bundle root)
 # ============================================================================
 
 # --- Cluster identity --------------------------------------------------------
-export CLUSTER_TYPE="${CLUSTER_TYPE:-k3d}"
 export CLUSTER_NAME="istio-igw-hardening"
 export CONTEXT="k3d-${CLUSTER_NAME}"
 

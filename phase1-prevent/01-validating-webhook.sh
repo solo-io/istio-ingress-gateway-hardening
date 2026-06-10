@@ -12,7 +12,7 @@
 #
 # SETUP
 #   Two candidate VirtualService resources:
-#     - bad-schema.yaml: invalid HTTP port name "BOGUS" (schema violation)
+#     - bad-schema.yaml: negative HTTP route weight (-1) — schema violation
 #     - dangling-ref.yaml: destination.host points at a Service that doesn't exist
 #
 # ACTION

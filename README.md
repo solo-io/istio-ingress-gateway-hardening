@@ -1,14 +1,13 @@
 # Istio Ingress Gateway Hardening Playground
 
-A self-contained, k3d-based reproducer and walkthrough of how to roll
-out Istio `Gateway`, `VirtualService`, `HTTPRoute`, and `GRPCRoute`
-changes safely. Nineteen runnable demonstrations cover the mechanisms;
-this README explains what each one proves and why it matters.
+A k3d-based reproducer and walkthrough of how to roll out Istio
+`Gateway`, `VirtualService`, `HTTPRoute`, and `GRPCRoute` changes
+safely. Nineteen runnable demonstrations cover the mechanisms; this
+README explains what each one proves and why it matters.
 
-It's written for engineers who are comfortable with Kubernetes and have
-at least a passing acquaintance with Istio, but who haven't yet thought
-carefully about why a `kubectl apply` to a `VirtualService` can take an
-ingress down — and what to do about it.
+It's written for engineers comfortable with Kubernetes and some Istio
+who haven't yet thought carefully about why a `kubectl apply` to a
+`VirtualService` can take an ingress down, and what to do about it.
 
 ## Contents
 
@@ -76,7 +75,7 @@ terminate on any gateway pod sees the new (potentially bad)
 configuration on its next request.
 
 The framework below is about reducing that blast radius without slowing
-the team's iteration speed. It has five phases:
+the team down. It has five phases:
 
 1. **Prevent** — gates that block a bad CRD from landing in the cluster
    at all.
@@ -90,8 +89,8 @@ the team's iteration speed. It has five phases:
    determine what happens when a bad configuration does arrive.
 
 Defense in depth: no single mechanism is sufficient. Each layer is
-cheap to get right; skipping any one of them leaves you exposed to
-exactly the class of failure that layer was meant to prevent.
+cheap to get right; skipping a layer leaves you exposed to the class
+of failure it was meant to prevent.
 
 ---
 
@@ -146,11 +145,11 @@ Used as a CI gate over rendered Helm/Kustomize output, this catches the
 dangling-reference class before the apply happens. Exit code is
 non-zero when errors are present, so pipeline integration is trivial.
 
-The key thing to internalize: **the webhook and `analyze` are different
-gates with different scopes.** Run only the webhook and the
-dangling-reference class slips through. Run only `analyze` in CI and
-any human with `kubectl apply` privileges can introduce dangling refs
-directly in production. The defensible posture runs both.
+**The webhook and `analyze` are different gates with different
+scopes.** Run only the webhook and the dangling-reference class slips
+through. Run only `analyze` in CI and any human with `kubectl apply`
+privileges can introduce dangling refs directly in production. The
+defensible posture runs both.
 
 > **Demo:** `phase1-prevent/02-istioctl-analyze.sh`. Runs `istioctl
 > analyze` against a manifests file with a dangling reference. Verifies
@@ -408,10 +407,10 @@ loop covers the forward apply, the candidate switch, and the revert.
 Distribution to canary pods finishes in under a second on a healthy
 k3d cluster, so the polling overhead is negligible.
 
-This silent removal is the playground's most actionable
-product-improvement finding: every Istio shop that automated
-`experimental wait` in its pipeline has to adapt, and the official docs
-don't flag the breaking change.
+This silent removal is the playground's most concrete upstream-feedback
+finding: every Istio shop that automated `experimental wait` in its
+pipeline has to adapt, and the official docs don't flag the breaking
+change.
 
 > **Demo:** `phase4-recover/11-experimental-wait-revert.sh`.
 
@@ -550,10 +549,10 @@ A few observations from running them side by side:
   `VirtualService.spec.mirror` and absent from `HTTPRoute` /
   `GRPCRoute` `RequestMirror` filters.
 
-The honest recommendation: pick the API your team will commit to
-operationally. Both can be made to work for safe CRD rollouts. The
-classic Istio API gives you feature breadth; the Gateway API gives you
-portability across mesh implementations.
+Pick the API your team will commit to operationally. Both can be made
+to work for safe CRD rollouts. The classic Istio API gives you feature
+breadth; the Gateway API gives you portability across mesh
+implementations.
 
 ---
 
@@ -577,6 +576,17 @@ Running individual demos:
 ./run-all.sh phase3-validate    # run a phase's demos only
 ```
 
+**Tunables** (environment variables, all optional):
+
+- `INGRESS_HTTP_PORT` (default `18080`) / `INGRESS_HTTPS_PORT` (default
+  `18443`) — host ports for the k3d load balancer. Override if either
+  collides with another local cluster, e.g.
+  `INGRESS_HTTP_PORT=28080 ./deploy.sh`.
+- `DEMO_TIMEOUT` (default `300` seconds) — per-demo timeout in
+  `run-all.sh`. A stuck demo (hung port-forward, hung exec) is killed
+  and recorded as a TIMEOUT rather than wedging the orchestrator.
+  Override with `DEMO_TIMEOUT=600 ./run-all.sh`.
+
 ---
 
 ## Prerequisites
@@ -589,6 +599,14 @@ Running individual demos:
 - `python3` (used by demo #13 for an inline keep-alive client; ships on macOS, may need installing on minimal Linux)
 - `jq`
 - `d2` (optional, only needed if you edit `docs/topology.d2` and want to re-render the SVG; the committed `docs/topology.svg` is what the README embeds)
+
+**Apple Silicon note:** the Grafana image-renderer sidecar is
+`linux/amd64`-only and runs under Rosetta on M-series Macs. Docker
+Desktop's Rosetta translation must be enabled (Settings → General →
+"Use Rosetta for x86_64/amd64 emulation on Apple Silicon") or the
+renderer pod will `CrashLoopBackOff` after `deploy.sh` finishes. The
+dashboard itself still works without the renderer; only automated
+PNG export breaks.
 
 ---
 
@@ -683,10 +701,9 @@ kubectl --context k3d-istio-igw-hardening port-forward -n monitoring \
    apply / revert events. Useful for correlating control-plane
    activity with data-plane changes.
 
-None of these metrics are demo-specific; they're the same ones you'd
-consume in production. The demos just surface them in a clean,
-well-labeled environment so you can build intuition about what a
-healthy rollout looks like before you go looking for the same shape
+None of these metrics are demo-specific; they're what you'd consume in
+production. The demos surface them in a labeled environment so you
+recognize the shape of a healthy rollout before you go looking for it
 in your own dashboards.
 
 **Capturing snapshots for write-up artifacts.** Take screenshots
@@ -713,8 +730,8 @@ enhancement.
 
 ## Iteration findings worth knowing
 
-A handful of non-obvious things surfaced while building this. They're
-the kind of thing you'd otherwise hit on your own first attempt:
+Non-obvious things that surfaced while building this — the kind of
+thing you'd otherwise hit on your own first attempt:
 
 1. **Load generators on the client side of an Istio ambient ingress
    must NOT live in an ambient-labeled namespace.** Ambient mode's

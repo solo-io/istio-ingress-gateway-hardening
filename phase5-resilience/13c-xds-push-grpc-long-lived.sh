@@ -55,8 +55,9 @@ trap cleanup_demo EXIT
 
 # ---------------------------------------------------------------------------
 # Step 1: Gateway with HTTP listener; VS routing the gRPC host to grpcbin
-#         on port 9001. Istio's HTTP listener accepts h2c and forwards
-#         to gRPC backends (appProtocol: grpc on the destination Service).
+#         on port 9000 (plaintext gRPC; 9001 on moul/grpcbin is TLS).
+#         Istio's HTTP listener accepts h2c and forwards to gRPC backends
+#         (appProtocol: grpc on the destination Service).
 # ---------------------------------------------------------------------------
 demo_step "Applying demo13c-canary-gw + VS routing to grpcbin (primary) on port 9000 (plaintext gRPC)"
 cat > "${TMPDIR_DEMO}/setup.yaml" <<EOF

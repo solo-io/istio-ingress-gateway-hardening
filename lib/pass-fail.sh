@@ -222,3 +222,4 @@ demo_assert_status_was() {
             ;;
     esac
 }
+export -f demo_start demo_step demo_info demo_assert_pass demo_assert_fail demo_end demo_assert_status_was

@@ -112,8 +112,8 @@ wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 # Step 3: pick one prod pod and one canary pod, inspect routes
 # ---------------------------------------------------------------------------
 demo_step "Inspecting 'istioctl pc routes' on one prod pod and one canary pod"
-PROD_POD="$(kctl get pod -n istio-system -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_PROD}" -o jsonpath='{.items[0].metadata.name}')"
-CANARY_POD="$(kctl get pod -n istio-system -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY}" -o jsonpath='{.items[0].metadata.name}')"
+PROD_POD="$(kctl get pod -n "${SYSTEM_NS}" -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_PROD}" -o jsonpath='{.items[0].metadata.name}')"
+CANARY_POD="$(kctl get pod -n "${SYSTEM_NS}" -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY}" -o jsonpath='{.items[0].metadata.name}')"
 demo_info "prod pod:   ${PROD_POD}"
 demo_info "canary pod: ${CANARY_POD}"
 
