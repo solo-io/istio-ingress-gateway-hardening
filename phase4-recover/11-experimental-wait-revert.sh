@@ -47,8 +47,8 @@ cleanup_demo() {
     if [[ "${WE_TOGGLED_ENV_VARS}" == "true" ]]; then
         echo "  • Reverting istiod env vars..."
         kctl set env deployment/istiod -n istio-system \
-            PILOT_ENABLE_CONFIG_DISTRIBUTION_TRACKING- PILOT_ENABLE_STATUS- 2>/dev/null
-        kctl rollout status deployment/istiod -n istio-system --timeout=120s 2>/dev/null
+            PILOT_ENABLE_CONFIG_DISTRIBUTION_TRACKING- PILOT_ENABLE_STATUS- >/dev/null 2>&1
+        kctl rollout status deployment/istiod -n istio-system --timeout=120s >/dev/null 2>&1
     fi
 }
 trap cleanup_demo EXIT

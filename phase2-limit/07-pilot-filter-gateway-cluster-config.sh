@@ -51,8 +51,8 @@ cleanup_demo() {
     kctl delete gateway demo07-canary-gw -n istio-system --ignore-not-found 2>/dev/null
     if [[ "${RESTORE_ENV_VAR}" == "true" ]]; then
         echo "  • Reverting istiod env var PILOT_FILTER_GATEWAY_CLUSTER_CONFIG..."
-        kctl set env deployment/istiod -n istio-system PILOT_FILTER_GATEWAY_CLUSTER_CONFIG- 2>/dev/null
-        kctl rollout status deployment/istiod -n istio-system --timeout=120s 2>/dev/null
+        kctl set env deployment/istiod -n istio-system PILOT_FILTER_GATEWAY_CLUSTER_CONFIG- >/dev/null 2>&1
+        kctl rollout status deployment/istiod -n istio-system --timeout=120s >/dev/null 2>&1
         # Gateway pods need to reconnect to the freshly-restarted istiod and
         # receive a fresh CDS push. proxy-status reports SYNCED before that
         # reconnect actually completes, so subsequent demos that immediately

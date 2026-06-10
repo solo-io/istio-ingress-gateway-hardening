@@ -434,25 +434,12 @@ kctl label configmap igw-hardening-dashboard -n "${MONITORING_NS}" \
     grafana_dashboard=1 --overwrite >/dev/null
 
 # ----------------------------------------------------------------------------
-# [9/9] Verify environment + flag-availability assertions
+# [9/9] Pod summary
 # ----------------------------------------------------------------------------
 echo "[9/9] Verification"
-
-# PILOT_FILTER_GATEWAY_CLUSTER_CONFIG availability check (iteration-risk mitigation).
-# The flag has existed since Istio 1.16. We probe istiod's discovery binary
-# for the flag name; if the probe doesn't conclusively confirm it, just say
-# so and defer the real check to demo #07's actual toggle.
-ISTIOD_POD=$(kctl get pod -n "${SYSTEM_NS}" -l app=istiod -o jsonpath='{.items[0].metadata.name}')
-if kctl exec -n "${SYSTEM_NS}" "${ISTIOD_POD}" -c discovery -- /usr/local/bin/pilot-discovery 2>&1 \
-        | grep -q "PILOT_FILTER_GATEWAY_CLUSTER_CONFIG"; then
-    echo "      PILOT_FILTER_GATEWAY_CLUSTER_CONFIG flag known to istiod"
-else
-    echo "      (env-var probe inconclusive; flag will be verified at demo #07)"
-fi
-
 echo ""
 echo "Pod summary by namespace:"
-for NS in "${SYSTEM_NS}" "${APPS_NS}" "${APPS_NS_A}" "${APPS_NS_B}" "${DUMMY_NS}"; do
+for NS in "${SYSTEM_NS}" "${APPS_NS}" "${APPS_NS_A}" "${APPS_NS_B}" "${DUMMY_NS}" "${LOADGEN_NS}" "${MONITORING_NS}"; do
     POD_COUNT=$(kctl get pods -n "${NS}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
     READY=$(kctl get pods -n "${NS}" --no-headers 2>/dev/null | awk '$2 ~ /\// {split($2,a,"/"); if (a[1]==a[2]) c++} END {print c+0}')
     printf "  %-20s %s/%s ready\n" "${NS}" "${READY}" "${POD_COUNT}"

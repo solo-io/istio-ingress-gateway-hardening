@@ -41,7 +41,12 @@ demo_start "05a" "selector-scoped-gateway-pair-istio" \
   "Two Gateway CRs with disjoint selectors route CRDs only to matching gateway pods"
 
 TMPDIR_DEMO="$(mktemp -d)"
-trap 'rm -rf "${TMPDIR_DEMO}"; kctl delete virtualservice demo05a-canary-vs -n apps --ignore-not-found 2>/dev/null; kctl delete gateway demo05a-prod-gw demo05a-canary-gw -n istio-system --ignore-not-found 2>/dev/null' EXIT
+cleanup_demo() {
+    rm -rf "${TMPDIR_DEMO}"
+    kctl delete virtualservice demo05a-canary-vs -n "${APPS_NS}" --ignore-not-found 2>/dev/null
+    kctl delete gateway demo05a-prod-gw demo05a-canary-gw -n "${SYSTEM_NS}" --ignore-not-found 2>/dev/null
+}
+trap cleanup_demo EXIT
 
 # ---------------------------------------------------------------------------
 # Step 1: apply prod-gateway and canary-gateway (disjoint selectors)

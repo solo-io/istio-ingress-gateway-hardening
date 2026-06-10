@@ -559,11 +559,12 @@ implementations.
 ## Quick start
 
 ```bash
-./deploy.sh        # ~3-5 min: creates k3d cluster, installs Istio 1.27.8 ambient,
-                   #   Gateway API CRDs, ingress gateway pair (prod + canary),
-                   #   httpbin family, grpcbin family, load-gen pods,
-                   #   kube-prometheus-stack + Grafana with dashboard
-./run-all.sh       # ~4-5 min: runs every demo, prints PASS/FAIL summary
+./deploy.sh        # ~2-4 min cold (less on warm caches): creates k3d cluster,
+                   #   installs Istio 1.27.8 ambient, Gateway API CRDs,
+                   #   ingress gateway pair (prod + canary), httpbin family,
+                   #   grpcbin family, load-gen pods, kube-prometheus-stack
+                   #   + Grafana with dashboard
+./run-all.sh       # ~3-4 min: runs every demo, prints PASS/FAIL summary
 ./cleanup.sh       # ~10s: deletes the k3d cluster
 ```
 
