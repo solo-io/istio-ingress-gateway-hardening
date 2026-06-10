@@ -77,14 +77,18 @@ spec:
     mirrorPercentage: {value: 100.0}
 EOF
 kctl apply -f "${TMPDIR_DEMO}/manifests.yaml" >/dev/null
-wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
 GHZ_POD="$(kctl get pod -n "${LOADGEN_NS}" -l app=ghz -o jsonpath='{.items[0].metadata.name}')"
 # All canary gateway pod names (Service load-balances ghz's single connection
 # to ONE of them; we sum stats across all replicas to find the actual hit pod).
-CANARY_GW_PODS=$(kctl get pod -n istio-system -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY}" -o jsonpath='{.items[*].metadata.name}')
+CANARY_GW_PODS=$(kctl get pod -n "${SYSTEM_NS}" -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY}" -o jsonpath='{.items[*].metadata.name}')
 demo_info "ghz pod:        ${GHZ_POD}"
 demo_info "canary gw pods: ${CANARY_GW_PODS}"
+
+# Poll one canary gateway pod's route table for the new host. Stronger
+# signal than `wait_until_synced` alone — see lib/pass-fail.sh.
+FIRST_CANARY="${CANARY_GW_PODS%% *}"
+wait_pc_match "${FIRST_CANARY}.${SYSTEM_NS}" routes "demo08c.example.com" 30 || true
 
 # envoy_upstream_rq (from lib/pass-fail.sh) sums upstream_rq_completed across
 # all canary gateway pods AND both Envoy stat buckets (.external + .internal —
@@ -99,13 +103,17 @@ demo_step "Sending 30 gRPC calls via ghz (DummyUnary)"
 GHZ_OUT="${TMPDIR_DEMO}/ghz.out"
 kctl exec -n "${LOADGEN_NS}" "${GHZ_POD}" -- /usr/local/bin/ghz \
     --insecure --connections=1 --concurrency=2 --total=30 \
+    --format=json \
     --authority=demo08c.example.com \
     --call=grpcbin.GRPCBin/DummyUnary --data='{}' \
     "${GATEWAY_APP_LABEL}-${TRACK_CANARY}.${SYSTEM_NS}.svc.cluster.local:80" > "${GHZ_OUT}" 2>&1
 
-# Show ghz summary (status code distribution)
+# Show ghz summary parsed from JSON. The previous awk-on-text approach was
+# coupled to ghz v0.120.0's exact "  [OK]" summary indentation; JSON is the
+# stable interface.
 demo_info "ghz summary:"
-grep -A 3 "Status code distribution" "${GHZ_OUT}" | sed 's/^/        /'
+jq -r '"        count=\(.count) ok=\(.statusCodeDistribution.OK // 0) avg=\(.average / 1000000 | floor)ms rps=\(.rps | floor)"' "${GHZ_OUT}" 2>/dev/null \
+    || echo "        (ghz json parse failed; raw output: $(head -c 200 "${GHZ_OUT}"))"
 
 # Allow the mirrored traffic to land on the shadow cluster
 sleep 3
@@ -119,7 +127,7 @@ demo_info "Post-load deltas: primary=${PRIMARY_DELTA}, shadow=${SHADOW_DELTA}"
 # Assertions
 # ---------------------------------------------------------------------------
 # (a) ghz must report 30/30 OK responses
-OK_COUNT=$(awk '/^  \[OK\]/ {print $2; exit}' "${GHZ_OUT}")
+OK_COUNT=$(jq -r '.statusCodeDistribution.OK // 0' "${GHZ_OUT}" 2>/dev/null)
 OK_COUNT=${OK_COUNT:-0}
 if [[ "${OK_COUNT}" -eq 30 ]]; then
     demo_assert_pass "All 30 ghz responses were OK (mirror is fire-and-forget; client unaffected)"

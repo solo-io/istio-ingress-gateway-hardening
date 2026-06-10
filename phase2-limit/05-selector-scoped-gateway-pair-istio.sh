@@ -41,7 +41,12 @@ demo_start "05a" "selector-scoped-gateway-pair-istio" \
   "Two Gateway CRs with disjoint selectors route CRDs only to matching gateway pods"
 
 TMPDIR_DEMO="$(mktemp -d)"
-trap 'rm -rf "${TMPDIR_DEMO}"; kctl delete virtualservice demo05a-canary-vs -n apps --ignore-not-found 2>/dev/null; kctl delete gateway demo05a-prod-gw demo05a-canary-gw -n istio-system --ignore-not-found 2>/dev/null' EXIT
+cleanup_demo() {
+    rm -rf "${TMPDIR_DEMO}"
+    kctl delete virtualservice demo05a-canary-vs -n "${APPS_NS}" --ignore-not-found 2>/dev/null
+    kctl delete gateway demo05a-prod-gw demo05a-canary-gw -n "${SYSTEM_NS}" --ignore-not-found 2>/dev/null
+}
+trap cleanup_demo EXIT
 
 # ---------------------------------------------------------------------------
 # Step 1: apply prod-gateway and canary-gateway (disjoint selectors)
@@ -105,20 +110,23 @@ spec:
 EOF
 kctl apply -f "${TMPDIR_DEMO}/vs.yaml" >/dev/null
 
-# Wait for istiod to push to canary pods (replaces a fragile bare sleep).
-wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
+# Pick the canary pod we'll verify against and poll its pc routes until the
+# new VS shows up. proxy-status SYNCED isn't a strong enough signal here:
+# right after the apply, istiod's push-debounce window can briefly show
+# SYNCED-to-old-state, and the verification below would then race the push.
+PROD_POD="$(kctl get pod -n "${SYSTEM_NS}" -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_PROD}" -o jsonpath='{.items[0].metadata.name}')"
+CANARY_POD="$(kctl get pod -n "${SYSTEM_NS}" -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY}" -o jsonpath='{.items[0].metadata.name}')"
+wait_pc_match "${CANARY_POD}.${SYSTEM_NS}" routes "demo05a-canary.example.com" 30 || true
 
 # ---------------------------------------------------------------------------
-# Step 3: pick one prod pod and one canary pod, inspect routes
+# Step 3: inspect routes on the prod pod and the canary pod
 # ---------------------------------------------------------------------------
 demo_step "Inspecting 'istioctl pc routes' on one prod pod and one canary pod"
-PROD_POD="$(kctl get pod -n istio-system -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_PROD}" -o jsonpath='{.items[0].metadata.name}')"
-CANARY_POD="$(kctl get pod -n istio-system -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY}" -o jsonpath='{.items[0].metadata.name}')"
 demo_info "prod pod:   ${PROD_POD}"
 demo_info "canary pod: ${CANARY_POD}"
 
-PROD_ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${PROD_POD}.istio-system" 2>/dev/null || true)"
-CANARY_ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${CANARY_POD}.istio-system" 2>/dev/null || true)"
+PROD_ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${PROD_POD}.${SYSTEM_NS}" 2>/dev/null || true)"
+CANARY_ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${CANARY_POD}.${SYSTEM_NS}" 2>/dev/null || true)"
 
 # Print compact route summaries so the FAIL signal includes context
 demo_info "prod pod routes (rows with 'demo05a'):"

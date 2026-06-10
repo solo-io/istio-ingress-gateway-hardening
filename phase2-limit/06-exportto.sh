@@ -45,7 +45,15 @@ cleanup_demo() {
 }
 trap cleanup_demo EXIT
 
-CANARY_POD="$(kctl get pod -n istio-system -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY}" -o jsonpath='{.items[0].metadata.name}')"
+# Resolve the canary gateway pod we'll inspect with `istioctl pc routes`.
+# Do this after ensure_cluster_up so a partially-deployed cluster produces a
+# clean failure here instead of cascading 'empty pod name' errors below.
+CANARY_POD="$(kctl get pod -n "${SYSTEM_NS}" -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+if [[ -z "${CANARY_POD}" ]]; then
+    demo_assert_fail "No canary gateway pods found (label app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY} in ${SYSTEM_NS}). Did deploy.sh complete?"
+    demo_end
+    exit $?
+fi
 demo_info "Inspecting canary pod: ${CANARY_POD}"
 
 # ---------------------------------------------------------------------------
@@ -86,12 +94,16 @@ spec:
           number: 8000
 EOF
 kctl apply -f "${TMPDIR_DEMO}/manifests.yaml" >/dev/null
-wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
+# Poll the canary pod's routes directly: a freshly-applied Gateway+VS goes
+# through istiod's push-debounce window, during which proxy-status briefly
+# shows SYNCED to the previous state. wait_pc_match returns only once the
+# route has actually landed.
+wait_pc_match "${CANARY_POD}.${SYSTEM_NS}" routes "demo06.example.com" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 2: assert route is present on canary pod (exportTo=["*"])
 # ---------------------------------------------------------------------------
-ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${CANARY_POD}.istio-system" 2>/dev/null || true)"
+ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${CANARY_POD}.${SYSTEM_NS}" 2>/dev/null || true)"
 if echo "${ROUTES}" | grep -qi "demo06.example.com"; then
     demo_assert_pass "With exportTo=['*'], the VS reaches the canary gateway pod"
     demo_info "  match line:"
@@ -107,7 +119,7 @@ demo_step "Patching VirtualService.spec.exportTo to ['.'] (own namespace only)"
 kctl patch virtualservice demo06-vs -n "${APPS_NS_A}" --type=merge -p '{"spec":{"exportTo":["."]}}' >/dev/null
 wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
 
-ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${CANARY_POD}.istio-system" 2>/dev/null || true)"
+ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${CANARY_POD}.${SYSTEM_NS}" 2>/dev/null || true)"
 if echo "${ROUTES}" | grep -qi "demo06.example.com"; then
     demo_assert_fail "After exportTo=['.'], route still present on canary pod (visibility scoping failed)"
     echo "${ROUTES}" | grep -i "demo06" | sed 's/^/        /'
@@ -120,9 +132,9 @@ fi
 # ---------------------------------------------------------------------------
 demo_step "Reverting exportTo back to ['*'] (control: route should reappear)"
 kctl patch virtualservice demo06-vs -n "${APPS_NS_A}" --type=merge -p '{"spec":{"exportTo":["*"]}}' >/dev/null
-wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
+wait_pc_match "${CANARY_POD}.${SYSTEM_NS}" routes "demo06.example.com" 30 || true
 
-ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${CANARY_POD}.istio-system" 2>/dev/null || true)"
+ROUTES="$("${ISTIOCTL}" --context "${CONTEXT}" pc routes "${CANARY_POD}.${SYSTEM_NS}" 2>/dev/null || true)"
 if echo "${ROUTES}" | grep -qi "demo06.example.com"; then
     demo_assert_pass "After reverting exportTo=['*'], route reappears (scoping is reversible)"
 else

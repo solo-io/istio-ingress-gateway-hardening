@@ -78,13 +78,27 @@ echo "════════════════════════�
 # the per-demo cleanup reverts it, so we don't pre-toggle it here.
 # ---------------------------------------------------------------------------
 WE_TOGGLED=false
-CURRENT_ENV="$(kctl get deployment istiod -n istio-system -o jsonpath='{.spec.template.spec.containers[0].env}' 2>/dev/null)"
+revert_istiod_env() {
+    # Idempotent: kubectl set env VAR- is a no-op if the var isn't set, so
+    # firing this on EXIT is safe whether or not we got far enough to toggle.
+    if [[ "${WE_TOGGLED}" == "true" ]]; then
+        echo ""
+        echo "Reverting istiod env vars (run-all.sh enabled them; restoring)..."
+        kctl set env deployment/istiod -n "${SYSTEM_NS}" \
+            PILOT_ENABLE_CONFIG_DISTRIBUTION_TRACKING- PILOT_ENABLE_STATUS- >/dev/null 2>&1 || true
+        kctl rollout status deployment/istiod -n "${SYSTEM_NS}" --timeout=120s >/dev/null 2>&1 || true
+        WE_TOGGLED=false
+    fi
+}
+trap revert_istiod_env EXIT INT TERM
+
+CURRENT_ENV="$(kctl get deployment istiod -n "${SYSTEM_NS}" -o jsonpath='{.spec.template.spec.containers[0].env}' 2>/dev/null)"
 if ! echo "${CURRENT_ENV}" | grep -q 'PILOT_ENABLE_CONFIG_DISTRIBUTION_TRACKING.*"value":"true"'; then
     echo ""
     echo "Enabling distribution-tracking env vars on istiod (batched)..."
-    kctl set env deployment/istiod -n istio-system \
+    kctl set env deployment/istiod -n "${SYSTEM_NS}" \
         PILOT_ENABLE_CONFIG_DISTRIBUTION_TRACKING=true PILOT_ENABLE_STATUS=true >/dev/null
-    kctl rollout status deployment/istiod -n istio-system --timeout=120s >/dev/null
+    kctl rollout status deployment/istiod -n "${SYSTEM_NS}" --timeout=120s >/dev/null
     WE_TOGGLED=true
     sleep 5
 fi
@@ -142,15 +156,11 @@ done
 TOTAL_DUR=$(($(date +%s) - START_ALL))
 
 # ---------------------------------------------------------------------------
-# Revert env vars
+# Revert env vars (the EXIT/INT/TERM trap above handles interrupts too;
+# calling explicitly here keeps the revert in the normal flow so the rollout
+# wait completes before the summary table prints).
 # ---------------------------------------------------------------------------
-if [[ "${WE_TOGGLED}" == "true" ]]; then
-    echo ""
-    echo "Reverting istiod env vars (run-all.sh enabled them; restoring)..."
-    kctl set env deployment/istiod -n istio-system \
-        PILOT_ENABLE_CONFIG_DISTRIBUTION_TRACKING- PILOT_ENABLE_STATUS- >/dev/null
-    kctl rollout status deployment/istiod -n istio-system --timeout=120s >/dev/null
-fi
+revert_istiod_env
 
 # ---------------------------------------------------------------------------
 # Summary table

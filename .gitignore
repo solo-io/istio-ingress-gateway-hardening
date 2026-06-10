@@ -11,6 +11,11 @@ istioctl.tar.gz
 # macOS detritus
 .DS_Store
 
+# Snapshots: captured PNGs are personal artifacts; the README in this dir
+# documents what to capture and stays tracked.
+snapshots/*
+!snapshots/README.md
+
 # Build artifacts from tools/h2dial-light (uses container image build via deploy.sh,
 # but local `go build` would drop a binary here)
 tools/h2dial-light/h2dial-light

@@ -9,13 +9,13 @@
       "description": "Rate of completed requests to each upstream cluster. The headline panel for #13/#13b/#13c — visualizes the route shift when an xDS push swaps a candidate VS. Mirror destinations (#08c, #08d) show alongside the primary.",
       "id": 1,
       "gridPos": {"h": 9, "w": 24, "x": 0, "y": 0},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
           "expr": "sum(rate(envoy_cluster_upstream_rq_completed{app=\"ingress-gw\", track=\"canary\", cluster_name=~\"outbound.*\"}[15s])) by (cluster_name)",
           "legendFormat": "{{cluster_name}}",
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "prometheus"}
+          "datasource": {"type": "prometheus", "uid": "${datasource}"}
         }
       ],
       "fieldConfig": {"defaults": {"unit": "reqps"}},
@@ -27,13 +27,13 @@
       "description": "Active TCP connections to each upstream cluster. #13b/#13c hold ONE connection through the full run; #08a-#08d show separate connections for primary vs shadow.",
       "id": 2,
       "gridPos": {"h": 9, "w": 12, "x": 0, "y": 9},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
           "expr": "sum(envoy_cluster_upstream_cx_active{app=\"ingress-gw\", track=\"canary\", cluster_name=~\"outbound.*\"}) by (cluster_name)",
           "legendFormat": "{{cluster_name}}",
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "prometheus"}
+          "datasource": {"type": "prometheus", "uid": "${datasource}"}
         }
       ],
       "fieldConfig": {"defaults": {"unit": "short"}},
@@ -45,13 +45,13 @@
       "description": "Number of distinct upstream clusters configured on canary gateway pods. Drops sharply when PILOT_FILTER_GATEWAY_CLUSTER_CONFIG=true is enabled (demo #07).",
       "id": 3,
       "gridPos": {"h": 9, "w": 12, "x": 12, "y": 9},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
           "expr": "count by (pod) (envoy_cluster_upstream_cx_total{app=\"ingress-gw\", track=\"canary\", cluster_name=~\"outbound.*\"})",
           "legendFormat": "{{pod}}",
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "prometheus"}
+          "datasource": {"type": "prometheus", "uid": "${datasource}"}
         }
       ],
       "fieldConfig": {"defaults": {"unit": "short"}},
@@ -63,13 +63,13 @@
       "description": "Rate of xDS configuration pushes from istiod. Spikes correspond to apply / revert events in demos #07, #10, #11, #13/#13b/#13c.",
       "id": 4,
       "gridPos": {"h": 9, "w": 24, "x": 0, "y": 18},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "targets": [
         {
           "expr": "sum(rate(pilot_xds_pushes[15s])) by (type)",
           "legendFormat": "{{type}}",
           "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "prometheus"}
+          "datasource": {"type": "prometheus", "uid": "${datasource}"}
         }
       ],
       "fieldConfig": {"defaults": {"unit": "ops"}},
@@ -79,12 +79,28 @@
   "refresh": "5s",
   "schemaVersion": 38,
   "tags": ["igw-hardening", "gateway-hardening"],
-  "templating": {"list": []},
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {"selected": false, "text": "default", "value": "default"},
+        "hide": 0,
+        "regex": "",
+        "refresh": 1,
+        "skipUrlSync": false,
+        "multi": false,
+        "includeAll": false
+      }
+    ]
+  },
   "time": {"from": "now-5m", "to": "now"},
   "timepicker": {},
   "timezone": "",
   "title": "Istio Ingress Gateway Hardening",
   "uid": "igw-hardening",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

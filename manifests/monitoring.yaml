@@ -49,8 +49,10 @@ spec:
       targetLabel: app
 ---
 # istiod Prometheus metrics endpoint (port 15014 / http-monitoring).
-# Sources pilot_xds_pushes_total, pilot_xds_push_time_seconds, and the rest
+# Sources pilot_xds_pushes, pilot_xds_push_time_seconds, and the rest
 # of the pilot.* family used by Panel 4 (xDS pushes per second).
+# Note: the metric is emitted as `pilot_xds_pushes` in Istio 1.27.8 (no
+# `_total` suffix that you'd expect from Prometheus client-go conventions).
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:

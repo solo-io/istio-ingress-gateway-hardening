@@ -93,7 +93,11 @@ spec:
       value: 100.0
 EOF
 kctl apply -f "${TMPDIR_DEMO}/manifests.yaml" >/dev/null
-wait_until_synced "ingress-gw-${TRACK_CANARY}" 30 || true
+# Poll the canary gateway pod's route table directly for the new host.
+# Stronger than `wait_until_synced` alone (which can briefly return SYNCED
+# against the pre-apply state during istiod's push-debounce window).
+CANARY_GW_POD="$(kctl get pod -n "${SYSTEM_NS}" -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY}" -o jsonpath='{.items[0].metadata.name}')"
+wait_pc_match "${CANARY_GW_POD}.${SYSTEM_NS}" routes "demo08a.example.com" 30 || true
 
 # ---------------------------------------------------------------------------
 # Step 2: port-forward to canary gateway Service
@@ -107,8 +111,8 @@ demo_info "port-forward localhost:${LOCAL_PORT} -> ingress-gw-canary:80 (pid=${P
 # ---------------------------------------------------------------------------
 # Step 3: capture pre-test shadow log line count, send 10 requests
 # ---------------------------------------------------------------------------
-SHADOW_POD="$(kctl get pod -n apps -l app=httpbin,version=shadow -o jsonpath='{.items[0].metadata.name}')"
-V1_POD="$(kctl get pod -n apps -l app=httpbin,version=v1 -o jsonpath='{.items[0].metadata.name}')"
+SHADOW_POD="$(kctl get pod -n "${APPS_NS}" -l app=httpbin,version=shadow -o jsonpath='{.items[0].metadata.name}')"
+V1_POD="$(kctl get pod -n "${APPS_NS}" -l app=httpbin,version=v1 -o jsonpath='{.items[0].metadata.name}')"
 demo_info "v1 pod:     ${V1_POD}"
 demo_info "shadow pod: ${SHADOW_POD}"
 

@@ -4,15 +4,12 @@
 # namespace, port, and path configuration.
 #
 # Every script in this playground sources this file. To change the cluster
-# name, Istio version, or port mappings, edit here. CLUSTER_TYPE is the only
-# variable that drives cluster-type-specific bring-up (k3d vs future eks);
-# everything else stays cluster-agnostic.
+# name, Istio version, or port mappings, edit here.
 #
 # Usage: source lib/cluster-vars.sh  (relative to test bundle root)
 # ============================================================================
 
 # --- Cluster identity --------------------------------------------------------
-export CLUSTER_TYPE="${CLUSTER_TYPE:-k3d}"
 export CLUSTER_NAME="istio-igw-hardening"
 export CONTEXT="k3d-${CLUSTER_NAME}"
 
@@ -59,7 +56,6 @@ export GRAFANA_ADMIN_PASSWORD="igw-hardening"
 # Grafana image-renderer sidecar (platform=linux/amd64 only; runs under
 # Rosetta on Apple Silicon hosts).
 export RENDERER_IMAGE="grafana/grafana-image-renderer:v5.8.3"
-# SNAPSHOTS_DIR is set further down after REPRODUCER_ROOT is computed.
 
 # --- Workload labels ---------------------------------------------------------
 # Gateway pods distinguish prod vs canary by label for demo #05 selector pair.
@@ -77,7 +73,6 @@ REPRODUCER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export REPRODUCER_ROOT
 export ISTIOCTL="${REPRODUCER_ROOT}/istioctl"
 export MANIFESTS_DIR="${REPRODUCER_ROOT}/manifests"
-export SNAPSHOTS_DIR="${REPRODUCER_ROOT}/snapshots"
 
 # --- kubectl wrapper --------------------------------------------------------
 # Always use --context to avoid hitting the wrong cluster when multiple
@@ -94,8 +89,19 @@ helm_cmd() {
 export -f helm_cmd
 
 # --- Sanity check function (callable by individual demo scripts) -------------
+# Retry the context probe twice on transient failure — `kubectl config
+# get-contexts` is normally instant, but during a busy `run-all.sh` we've
+# seen it occasionally return empty mid-sweep, causing a spurious demo
+# fail. The cluster-reachability check below is the real authority.
 ensure_cluster_up() {
-    if ! kubectl config get-contexts -o name 2>/dev/null | grep -qx "${CONTEXT}"; then
+    local found=false
+    for _ in 1 2 3; do
+        if kubectl config get-contexts -o name 2>/dev/null | grep -qx "${CONTEXT}"; then
+            found=true; break
+        fi
+        sleep 1
+    done
+    if [[ "${found}" != "true" ]]; then
         echo "ERROR: Context '${CONTEXT}' not found. Run ./deploy.sh first." >&2
         return 1
     fi

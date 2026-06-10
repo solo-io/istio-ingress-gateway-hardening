@@ -99,7 +99,9 @@ for i in $(seq 1 60); do
     sleep 1
 done
 [[ "${READY:-0}" -lt 1 ]] && { demo_assert_fail "Istio did not provision backing pod in 60s"; demo_end; exit $?; }
-wait_until_synced "demo09b-gw-istio" 30 || true
+# Poll the auto-provisioned pod's route table directly for the new host.
+GW_POD="$(kctl get pod -n "${APPS_NS}" -l gateway.networking.k8s.io/gateway-name=demo09b-gw -o jsonpath='{.items[0].metadata.name}')"
+wait_pc_match "${GW_POD}.${APPS_NS}" routes "demo09b.example.com" 30 || true
 
 LOCAL_PORT=18692
 PF_PID="$(start_port_forward "${APPS_NS}" "svc/demo09b-gw-istio" "${LOCAL_PORT}:80")" \

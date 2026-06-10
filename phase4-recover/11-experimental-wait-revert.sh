@@ -47,8 +47,8 @@ cleanup_demo() {
     if [[ "${WE_TOGGLED_ENV_VARS}" == "true" ]]; then
         echo "  • Reverting istiod env vars..."
         kctl set env deployment/istiod -n istio-system \
-            PILOT_ENABLE_CONFIG_DISTRIBUTION_TRACKING- PILOT_ENABLE_STATUS- 2>/dev/null
-        kctl rollout status deployment/istiod -n istio-system --timeout=120s 2>/dev/null
+            PILOT_ENABLE_CONFIG_DISTRIBUTION_TRACKING- PILOT_ENABLE_STATUS- >/dev/null 2>&1
+        kctl rollout status deployment/istiod -n istio-system --timeout=120s >/dev/null 2>&1
     fi
 }
 trap cleanup_demo EXIT
@@ -156,6 +156,13 @@ else
     WAIT_ELAPSED=$(( $(date +%s) - WAIT_START ))
     demo_assert_fail "Forward-path SYNCED timeout after ${WAIT_ELAPSED}s"
 fi
+# Extra signal: confirm the demo11 host actually appears in the route table.
+# This catches the push-debounce race where SYNCED can briefly mean
+# SYNCED-to-old-state. Subsequent v2/revert applies don't need this — the
+# hostname stays the same; only the backend cluster changes (covered by the
+# log-delta backend check below).
+CANARY_GW_POD="$(kctl get pod -n "${SYSTEM_NS}" -l "app=${GATEWAY_APP_LABEL},${TRACK_LABEL_KEY}=${TRACK_CANARY}" -o jsonpath='{.items[0].metadata.name}')"
+wait_pc_match "${CANARY_GW_POD}.${SYSTEM_NS}" routes "demo11.example.com" 15 || true
 
 if run_traffic_and_check_backend "${V1_POD}" "v1" "${V2_POD}" "v2"; then
     demo_assert_pass "After VS-v1 apply + SYNCED, traffic routes to v1"

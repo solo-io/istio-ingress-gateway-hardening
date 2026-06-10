@@ -1,14 +1,13 @@
 # Istio Ingress Gateway Hardening Playground
 
-A self-contained, k3d-based reproducer and walkthrough of how to roll
-out Istio `Gateway`, `VirtualService`, `HTTPRoute`, and `GRPCRoute`
-changes safely. Nineteen runnable demonstrations cover the mechanisms;
-this README explains what each one proves and why it matters.
+A k3d-based reproducer and walkthrough of how to roll out Istio
+`Gateway`, `VirtualService`, `HTTPRoute`, and `GRPCRoute` changes
+safely. Nineteen runnable demonstrations cover the mechanisms; this
+README explains what each one proves and why it matters.
 
-It's written for engineers who are comfortable with Kubernetes and have
-at least a passing acquaintance with Istio, but who haven't yet thought
-carefully about why a `kubectl apply` to a `VirtualService` can take an
-ingress down — and what to do about it.
+It's written for engineers comfortable with Kubernetes and some Istio
+who haven't yet thought carefully about why a `kubectl apply` to a
+`VirtualService` can take an ingress down, and what to do about it.
 
 ## Contents
 
@@ -48,11 +47,11 @@ When you change an Istio `Gateway`, `VirtualService`, or
 Istio's control plane (`istiod`) processes the CRD change and pushes the
 resulting configuration to every Envoy proxy whose labels match the
 resource's selector. There is no "rolling configuration update." There
-is no health check on the configuration itself. A malformed routing
-rule, a TLS setting with a missing credential reference, a destination
-pointed at a Service that doesn't exist — istiod accepts it (mostly;
-we'll qualify that shortly), generates the corresponding xDS payload,
-and pushes it to every gateway pod at once.
+is no health check on the configuration itself. istiod accepts almost
+anything that's textually well-formed (a malformed routing rule, a TLS
+setting with a missing credential reference, a destination pointed at
+a nonexistent Service — we'll qualify the "almost" shortly), generates
+the xDS payload, and pushes it to every gateway pod at once.
 
 If you've staged your gateway pod deployment so that the new image rolls
 out at the same time as the new CRD configuration, two distinct things
@@ -65,10 +64,10 @@ happen in parallel:
    simultaneously. Atomic from the cluster's perspective. Not
    health-check-gated. Not reversible without another CRD apply.
 
-The blast radius of a bad configuration change is therefore "every
-gateway pod that matches the resource's selector, as soon as istiod
-processes the apply." For a typical single-tier ingress deployment, that
-means "every gateway pod, in seconds, in production." For teams
+A bad configuration change therefore reaches every gateway pod whose
+labels match the resource's selector, in the time it takes istiod to
+process the apply. For a typical single-tier ingress deployment, that
+means every gateway pod, in seconds, in production. For teams
 operating behind a load balancer that distributes by connection rather
 than by request (any L4 LB — AWS NLB, GCP TCP load balancer, on-prem F5),
 this surface manifests as: every client whose connection happens to
@@ -76,7 +75,7 @@ terminate on any gateway pod sees the new (potentially bad)
 configuration on its next request.
 
 The framework below is about reducing that blast radius without slowing
-the team's iteration speed. It has five phases:
+the team down. It has five phases:
 
 1. **Prevent** — gates that block a bad CRD from landing in the cluster
    at all.
@@ -90,8 +89,8 @@ the team's iteration speed. It has five phases:
    determine what happens when a bad configuration does arrive.
 
 Defense in depth: no single mechanism is sufficient. Each layer is
-cheap to get right; skipping any one of them leaves you exposed to
-exactly the class of failure that layer was meant to prevent.
+cheap to get right; skipping a layer leaves you exposed to the class
+of failure it was meant to prevent.
 
 ---
 
@@ -100,8 +99,7 @@ exactly the class of failure that layer was meant to prevent.
 ### Phase 1 — Prevent
 
 The cheapest configuration change to fix is the one that never lands
-in the cluster. Three gates compose, each catching a different class
-of problem.
+in the cluster.
 
 **The Istio validating admission webhook.** When you install Istio, it
 registers a `ValidatingWebhookConfiguration` that routes `CREATE` /
@@ -146,11 +144,11 @@ Used as a CI gate over rendered Helm/Kustomize output, this catches the
 dangling-reference class before the apply happens. Exit code is
 non-zero when errors are present, so pipeline integration is trivial.
 
-The key thing to internalize: **the webhook and `analyze` are different
-gates with different scopes.** Run only the webhook and the
-dangling-reference class slips through. Run only `analyze` in CI and
-any human with `kubectl apply` privileges can introduce dangling refs
-directly in production. The defensible posture runs both.
+**The webhook and `analyze` are different gates with different
+scopes.** Run only the webhook and the dangling-reference class slips
+through. Run only `analyze` in CI and any human with `kubectl apply`
+privileges can introduce dangling refs directly in production. The
+defensible posture runs both.
 
 > **Demo:** `phase1-prevent/02-istioctl-analyze.sh`. Runs `istioctl
 > analyze` against a manifests file with a dangling reference. Verifies
@@ -310,9 +308,9 @@ against real-shaped requests before promoting it to production.
 
 **Traffic mirroring (shadow traffic).** Route 100% of traffic to the
 production backend and **mirror** the same requests to a candidate
-backend. The mirror is fire-and-forget — the client sees only the
-production response; the candidate's response is discarded. Errors and
-crashes at the candidate do not affect the client.
+backend. The mirror is fire-and-forget: the client sees only the
+production response, and the candidate's response is discarded.
+Errors and crashes at the candidate do not affect the client.
 
 This catches the class of issue where the request parses fine but the
 backend handler crashes on a specific shape of real production payload
@@ -326,9 +324,10 @@ Mechanism support across APIs:
 | Classic Istio API | `VirtualService.spec.http[*].mirror` + `mirrorPercentage` | Yes (0.0–100.0) |
 | Gateway API | `HTTPRoute` / `GRPCRoute` `RequestMirror` filter | **No (100%-only)** |
 
-The classic Istio API's percentage knob earns its keep: you can mirror
-1% of production traffic to validate a new backend without doubling the
-load on it. The Gateway API filter is 100%-only, so sub-sampling with
+The classic Istio API's percentage knob matters in practice: you can
+mirror 1% of production traffic to validate a new backend without
+doubling its load. The Gateway API filter is 100%-only, so sub-sampling
+with
 Gateway API requires an `ExtensionRef` filter or routing through a
 fractional-sampling proxy.
 
@@ -350,13 +349,14 @@ traffic, a header-matched canary routes a fraction of real traffic to
 the candidate based on an HTTP header. Requests carrying `x-canary:
 true` go to the candidate; everyone else stays on production.
 
-This is the right tool when you want to exercise the candidate with
-**real end-to-end behavior** — response path included — not just the
-shadow-side observation. The selector can be any property of the
+Use this when you want to exercise the candidate with real end-to-end
+behavior, response path included, not just the shadow-side observation.
+The selector can be any property of the
 request: a header set by a feature-flag system, a session-affinity
 cookie, an authenticated user attribute extracted by an EnvoyFilter.
 Pair it with synthetic test traffic that injects the header from a CI
-pipeline and you get full-fidelity validation against production.
+pipeline, and you can validate the candidate against real production
+behavior.
 
 Both APIs support this identically. The more-specific match wins; the
 unmatched default rule catches everything else.
@@ -408,10 +408,10 @@ loop covers the forward apply, the candidate switch, and the revert.
 Distribution to canary pods finishes in under a second on a healthy
 k3d cluster, so the polling overhead is negligible.
 
-This silent removal is the playground's most actionable
-product-improvement finding: every Istio shop that automated
-`experimental wait` in its pipeline has to adapt, and the official docs
-don't flag the breaking change.
+This silent removal is the playground's most concrete upstream-feedback
+finding: every Istio shop that automated `experimental wait` in its
+pipeline has to adapt, and the official docs don't flag the breaking
+change.
 
 > **Demo:** `phase4-recover/11-experimental-wait-revert.sh`.
 
@@ -464,10 +464,10 @@ property: **existing connections see new routes on their next request
 after an xDS push to their gateway pod**.
 
 This runs counter to a common intuition. Operators sometimes assume
-that an in-flight connection pins the routing decision at
+an in-flight connection pins the routing decision at
 connection-establishment time, and that long-lived connections are
-therefore insulated from mid-flight configuration changes. **That
-intuition is wrong for HTTP-family protocols at the L7 ingress.**
+insulated from mid-flight configuration changes. That intuition is
+wrong for HTTP-family protocols at the L7 ingress.
 
 The intuition is right at the L4 layer in one narrow sense: an NLB
 connection to gateway pod A stays on pod A for the connection's
@@ -486,10 +486,10 @@ you connection-grain control:
 - A client whose connection terminated on a **canary**-track pod sees
   the new canary VS on its next request.
 
-This composition is the load-bearing protection for safe in-place
-CRD rollouts behind an L4 load balancer. It doesn't come from
-connection state; it comes from **track isolation combined with the
-NLB's connection stickiness**.
+This composition is the main protection for safe in-place CRD
+rollouts behind an L4 load balancer. It doesn't come from connection
+state; it comes from track isolation combined with the NLB's
+connection stickiness.
 
 > **Demos:**
 > - `phase5-resilience/13-xds-push-track-isolation.sh` — HTTP/1.1 keep-alive
@@ -516,9 +516,9 @@ The TCP row is the interesting one. For Layer-4 routes via
 the routing decision is taken at connection-establishment time and
 locked in for the connection's lifetime. The "existing connections see
 new routes on next request" finding from Phase 5 **does not** apply.
-This cuts both ways: TCP services get connection-level isolation from
-config changes for free, but you also can't shift a TCP route without
-forcing client reconnects.
+This cuts both ways: TCP services inherit connection-level isolation
+from config changes, but you can't shift a TCP route without forcing
+client reconnects.
 
 ---
 
@@ -534,7 +534,7 @@ workload-binding versus `allowedRoutes.namespaces` per-listener),
 `exportTo` (Istio-only), mirror percentage support (Istio-only) — both
 demos are present.
 
-A few observations from running them side by side:
+Observations from running both:
 
 - **Routing primitives are mostly equivalent.** Both APIs cleanly
   express "route by host," "route by path prefix," "route by header
@@ -550,21 +550,22 @@ A few observations from running them side by side:
   `VirtualService.spec.mirror` and absent from `HTTPRoute` /
   `GRPCRoute` `RequestMirror` filters.
 
-The honest recommendation: pick the API your team will commit to
-operationally. Both can be made to work for safe CRD rollouts. The
-classic Istio API gives you feature breadth; the Gateway API gives you
-portability across mesh implementations.
+Pick the API your team will commit to operationally. Both can be made
+to work for safe CRD rollouts. The classic Istio API gives you feature
+breadth; the Gateway API gives you portability across mesh
+implementations.
 
 ---
 
 ## Quick start
 
 ```bash
-./deploy.sh        # ~3-5 min: creates k3d cluster, installs Istio 1.27.8 ambient,
-                   #   Gateway API CRDs, ingress gateway pair (prod + canary),
-                   #   httpbin family, grpcbin family, load-gen pods,
-                   #   kube-prometheus-stack + Grafana with dashboard
-./run-all.sh       # ~4-5 min: runs every demo, prints PASS/FAIL summary
+./deploy.sh        # ~2-4 min cold (less on warm caches): creates k3d cluster,
+                   #   installs Istio 1.27.8 ambient, Gateway API CRDs,
+                   #   ingress gateway pair (prod + canary), httpbin family,
+                   #   grpcbin family, load-gen pods, kube-prometheus-stack
+                   #   + Grafana with dashboard
+./run-all.sh       # ~3-4 min: runs every demo, prints PASS/FAIL summary
 ./cleanup.sh       # ~10s: deletes the k3d cluster
 ```
 
@@ -577,6 +578,17 @@ Running individual demos:
 ./run-all.sh phase3-validate    # run a phase's demos only
 ```
 
+**Tunables** (environment variables, all optional):
+
+- `INGRESS_HTTP_PORT` (default `18080`) / `INGRESS_HTTPS_PORT` (default
+  `18443`) — host ports for the k3d load balancer. Override if either
+  collides with another local cluster, e.g.
+  `INGRESS_HTTP_PORT=28080 ./deploy.sh`.
+- `DEMO_TIMEOUT` (default `300` seconds) — per-demo timeout in
+  `run-all.sh`. A stuck demo (hung port-forward, hung exec) is killed
+  and recorded as a TIMEOUT rather than wedging the orchestrator.
+  Override with `DEMO_TIMEOUT=600 ./run-all.sh`.
+
 ---
 
 ## Prerequisites
@@ -588,7 +600,16 @@ Running individual demos:
 - `go` (for building `h2dial-light` — only used at deploy time)
 - `python3` (used by demo #13 for an inline keep-alive client; ships on macOS, may need installing on minimal Linux)
 - `jq`
+- `timeout(1)` — built-in on Linux as part of GNU coreutils. On macOS, install via `brew install coreutils` (provides `gtimeout`, which `run-all.sh` picks up automatically). Without it, demos run unbounded — a stuck demo wedges the whole sweep.
 - `d2` (optional, only needed if you edit `docs/topology.d2` and want to re-render the SVG; the committed `docs/topology.svg` is what the README embeds)
+
+**Apple Silicon note:** the Grafana image-renderer sidecar is
+`linux/amd64`-only and runs under Rosetta on M-series Macs. Docker
+Desktop's Rosetta translation must be enabled (Settings → General →
+"Use Rosetta for x86_64/amd64 emulation on Apple Silicon") or the
+renderer pod will `CrashLoopBackOff` after `deploy.sh` finishes. The
+dashboard itself still works without the renderer; only automated
+PNG export breaks.
 
 ---
 
@@ -683,10 +704,9 @@ kubectl --context k3d-istio-igw-hardening port-forward -n monitoring \
    apply / revert events. Useful for correlating control-plane
    activity with data-plane changes.
 
-None of these metrics are demo-specific; they're the same ones you'd
-consume in production. The demos just surface them in a clean,
-well-labeled environment so you can build intuition about what a
-healthy rollout looks like before you go looking for the same shape
+None of these metrics are demo-specific; they're what you'd consume in
+production. The demos surface them in a labeled environment so you
+recognize the shape of a healthy rollout before you go looking for it
 in your own dashboards.
 
 **Capturing snapshots for write-up artifacts.** Take screenshots
@@ -713,8 +733,8 @@ enhancement.
 
 ## Iteration findings worth knowing
 
-A handful of non-obvious things surfaced while building this. They're
-the kind of thing you'd otherwise hit on your own first attempt:
+Non-obvious things that surfaced while building this — the kind of
+thing you'd otherwise hit on your own first attempt:
 
 1. **Load generators on the client side of an Istio ambient ingress
    must NOT live in an ambient-labeled namespace.** Ambient mode's
@@ -810,15 +830,14 @@ the next run. Delete it manually if you don't want it.
 |------|------|
 | `LICENSE` | Apache License 2.0 |
 | `lib/cluster-vars.sh` | Single source of truth for cluster name, versions, namespaces, paths |
-| `lib/pass-fail.sh` | PASS/FAIL output helpers plus shared utilities (`start_port_forward`, `wait_until_synced`, `envoy_upstream_rq`) |
-| `lib/grafana-snapshot.sh` | Snapshot-helper stub (preserved for future revival; not called by demos) |
+| `lib/pass-fail.sh` | PASS/FAIL output helpers plus shared utilities (`start_port_forward`, `wait_until_synced`, `wait_pc_match`, `envoy_upstream_rq`) |
 | `tools/h2dial-light/` | Vendored Go HTTP/2 (h2c) client (idle-mode pod for #13b) |
 | `tools/ghz/` | Dockerfile for gRPC load tester (idle-mode pod for #08c, #08d, #13c) |
 | `manifests/grpcbin.yaml` | gRPC backends (primary, shadow, v2) |
 | `manifests/monitoring.yaml` | PodMonitors for gateway pods + istiod |
 | `dashboard/igw-hardening.json` | 4-panel Grafana dashboard (auto-loaded by deploy.sh) |
 | `docs/topology.d2` / `topology.svg` | Source + rendered topology diagram embedded in this README |
-| `phase{1,2,3,4,5}*/` | Per-phase demo scripts |
+| `phase{1,2,3,4,5}-*/` | Per-phase demo scripts |
 | `deploy.sh` | One-shot environment bring-up |
 | `cleanup.sh` | k3d cluster teardown |
 | `run-all.sh` | Orchestrator: runs every demo, batches istiod toggles, prints summary |

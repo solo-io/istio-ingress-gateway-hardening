@@ -21,6 +21,5 @@ the Grafana image-renderer sidecar was attempted in deploy.sh but currently
 produces empty-data PNGs (renderer-session disconnect: the headless
 Chromium renders panel chrome but not data series, even though the same
 queries return data via Grafana's interactive UI and the `/api/ds/query`
-endpoint). The `lib/grafana-snapshot.sh` helper is preserved for future
-revival; the supported snapshot path is the manual interactive flow
+endpoint). The supported snapshot path is the manual interactive flow
 documented in the main README.

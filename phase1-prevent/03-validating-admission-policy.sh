@@ -43,8 +43,20 @@ demo_start "03" "validating-admission-policy" \
 # ---------------------------------------------------------------------------
 # Pre-flight: K8s 1.30+ required for VAP
 # ---------------------------------------------------------------------------
+if ! command -v jq >/dev/null 2>&1; then
+    demo_assert_fail "jq not found on PATH; required to parse 'kubectl version -o json'"
+    demo_end
+    exit $?
+fi
 K8S_MINOR="$(kctl version -o json 2>/dev/null | jq -r '.serverVersion.minor' | tr -d '+')"
-if [[ -z "${K8S_MINOR}" ]] || [[ "${K8S_MINOR}" -lt 30 ]]; then
+# Guard against missing/null values before the numeric comparison — under
+# 'set -u' a string like "null" or "" makes -lt throw a syntax error.
+if [[ -z "${K8S_MINOR}" ]] || [[ "${K8S_MINOR}" == "null" ]] || ! [[ "${K8S_MINOR}" =~ ^[0-9]+$ ]]; then
+    demo_assert_fail "Could not determine K8s server minor version (got '${K8S_MINOR}')"
+    demo_end
+    exit $?
+fi
+if [[ "${K8S_MINOR}" -lt 30 ]]; then
     demo_assert_fail "K8s 1.30+ required for ValidatingAdmissionPolicy; cluster minor='${K8S_MINOR}'"
     demo_end
     exit $?
